@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Tuple
 
 Vec2 = Tuple[int, int]
 DrawItem = Tuple[int, int, str, int]
+FloorMap = List[str]
+Grid = List[List[str]]
 
 def _get_user_db_path() -> Path:
     xdg = os.environ.get('XDG_DATA_HOME')
@@ -21,27 +23,6 @@ def _get_user_db_path() -> Path:
 # Use per-user data directory for the map DB so system-wide installs
 # do not attempt to write under /usr/lib
 DB_PATH = _get_user_db_path()
-DEFAULT_MAP_DATA = [
-    "####################",
-    "#..D.....#........##",
-    "#..#.###.#.######..#",
-    "#..#...#.#......#..#",
-    "#..###.#.####.#.#..#",
-    "#...S..#....#.#.#..#",
-    "#.######.##.#.#.#..#",
-    "#.#..M.#....#...#..#",
-    "#.#.##.##########..#",
-    "#...##......D...M..#",
-    "###.######.#########",
-    "#......#...........#",
-    "#.####.#.#####M###.#",
-    "#.#....#.....#.....#",
-    "#.#.########.#.###.#",
-    "#.#......M...#...#.#",
-    "#.#############.#..#",
-    "#..................#",
-    "####################",
-]
 
 DIRECTIONS: List[Vec2] = [
     (0, -1),
@@ -50,6 +31,7 @@ DIRECTIONS: List[Vec2] = [
     (-1, 0),
 ]
 DIRECTION_NAMES = ["N", "E", "S", "W"]
+
 WALL_COLOR = 244
 DOOR_COLOR = 220
 ACCENT_COLOR = 51
@@ -58,46 +40,146 @@ MAP_WALL_COLOR = 245
 PLAYER_COLOR = 46
 ENEMY_COLOR = 196
 SWORD_COLOR = 226
+STAIR_COLOR = 159
 MAX_RENDER_DEPTH = 12.0
 FOV_SCALE = 0.85
 START_ENERGY = 12
 MAX_ENERGY = 12
 ATTACK_COST_WITH_SWORD = 1
 ATTACK_COST_NO_SWORD = 2
-ENEMY_DAMAGE_WITH_SWORD = 1
-ENEMY_DAMAGE_NO_SWORD = 3
 WAIT_ENERGY_GAIN = 1
 
+DEFAULT_FLOORS: List[FloorMap] = [
+    [
+        "####################",
+        "#......#....D......#",
+        "#.####.#.######.##.#",
+        "#.#....#......#....#",
+        "#.#.#########.#.##.#",
+        "#.#.......#...#..>.#",
+        "#.#.#####.#.#####..#",
+        "#...#...#.#.....#..#",
+        "###.#.###.###.#.#..#",
+        "#...#.....M...#.#..#",
+        "#.#######.#####.#..#",
+        "#.....#...#.....#..#",
+        "#.###.#.###.#####..#",
+        "#.#...#...#.....#..#",
+        "#.#.#####.#.###.#..#",
+        "#.#.....#.#.#S..#..#",
+        "#.#####.#.#.#.###..#",
+        "#.....M...#.#......#",
+        "####################",
+    ],
+    [
+        "####################",
+        "#..<....#.....#....#",
+        "#.#####.#.###.#.##.#",
+        "#.....#.#...#.#....#",
+        "#.###.#.###.#.####.#",
+        "#...#.#...#.#......#",
+        "###.#.###.#.######.#",
+        "#...#...#.#..M.....#",
+        "#.#####.#.########.#",
+        "#.....#.#.....#....#",
+        "#.###.#.#####.#.##.#",
+        "#.#...#.....#.#.#..#",
+        "#.#.#######.#.#.#>.#",
+        "#.#.#.....#.#.#.##.#",
+        "#...#.###.#.#.#....#",
+        "###.#...#.#.#.####.#",
+        "#...###.#...#......#",
+        "#.....M.....D......#",
+        "####################",
+    ],
+    [
+        "####################",
+        "#..<......#........#",
+        "#.######.#.#.#####.#",
+        "#.#....#.#.#.#.....#",
+        "#.#.##.#.#.#.#.###.#",
+        "#.#.##.#.#.#.#.#...#",
+        "#.#....#...#.#.#.#.#",
+        "#.###########.#.#..#",
+        "#.......#.....#.#..#",
+        "#.#####.#.#####.#..#",
+        "#.#...#.#.....#.#..#",
+        "#.#.#.#.#####.#.#..#",
+        "#...#.#.....#.#...##",
+        "#####.#####.#.#####.#",
+        "#...#.....#.#.....#.#",
+        "#.#.###.#.#.#####.#.#",
+        "#.#...M.#.#.....#...#",
+        "#....S....D.........#",
+        "####################",
+    ],
+]
 
-def clamp(value: int, low: int, high: int) -> int:
-    return max(low, min(high, value))
+
+def normalize_floor_rows(rows: List[str]) -> Grid:
+    width = max((len(row) for row in rows), default=1)
+    return [list(row.ljust(width, "#")) for row in rows]
 
 
-def initialize_map_db(db_path: Path) -> None:
+def initialize_map_db(db_path: Path = DB_PATH) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            'CREATE TABLE IF NOT EXISTS map_rows ('
-            'row_index INTEGER PRIMARY KEY, '
-            'row_text TEXT NOT NULL'
-            ')'
+            "CREATE TABLE IF NOT EXISTS floor_map_rows ("
+            "floor_index INTEGER NOT NULL, "
+            "row_index INTEGER NOT NULL, "
+            "row_text TEXT NOT NULL, "
+            "PRIMARY KEY (floor_index, row_index)"
+            ")"
         )
-        count = conn.execute('SELECT COUNT(*) FROM map_rows').fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM floor_map_rows").fetchone()[0]
         if count == 0:
+            # Check for legacy single-floor data before populating defaults
+            legacy_table = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='map_rows'"
+            ).fetchone()
+            if legacy_table:
+                legacy_rows = conn.execute("SELECT row_text FROM map_rows ORDER BY row_index").fetchall()
+                if legacy_rows:
+                    conn.executemany(
+                        "INSERT INTO floor_map_rows (floor_index, row_index, row_text) VALUES (?, ?, ?)",
+                        [(0, i, r[0]) for i, r in enumerate(legacy_rows)]
+                    )
+                    # Also add default remaining floors if any
+                    for f_idx in range(1, len(DEFAULT_FLOORS)):
+                        conn.executemany(
+                            "INSERT INTO floor_map_rows (floor_index, row_index, row_text) VALUES (?, ?, ?)",
+                            [(f_idx, r_idx, text) for r_idx, text in enumerate(DEFAULT_FLOORS[f_idx])]
+                        )
+                    conn.commit()
+                    return
+
             conn.executemany(
-                'INSERT INTO map_rows (row_index, row_text) VALUES (?, ?)',
-                list(enumerate(DEFAULT_MAP_DATA)),
+                "INSERT INTO floor_map_rows (floor_index, row_index, row_text) VALUES (?, ?, ?)",
+                [
+                    (floor_index, row_index, row_text)
+                    for floor_index, floor_rows in enumerate(DEFAULT_FLOORS)
+                    for row_index, row_text in enumerate(floor_rows)
+                ],
             )
         conn.commit()
 
 
-def load_map_data(db_path: Path = DB_PATH) -> List[str]:
+def load_floors(db_path: Path = DB_PATH) -> List[Grid]:
     initialize_map_db(db_path)
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
-            'SELECT row_text FROM map_rows ORDER BY row_index'
+            "SELECT floor_index, row_index, row_text FROM floor_map_rows ORDER BY floor_index, row_index"
         ).fetchall()
-    map_data = [row[0] for row in rows if row and row[0]]
-    return map_data or list(DEFAULT_MAP_DATA)
+    grouped: Dict[int, List[str]] = {}
+    for floor_index, _row_index, row_text in rows:
+        grouped.setdefault(int(floor_index), []).append(str(row_text))
+    if grouped:
+        return [normalize_floor_rows(grouped[index]) for index in sorted(grouped)]
+    return [normalize_floor_rows(rows) for rows in DEFAULT_FLOORS]
+
+
+def clamp(value: int, low: int, high: int) -> int:
+    return max(low, min(high, value))
 
 
 def setup_colors() -> None:
@@ -111,20 +193,27 @@ def setup_colors() -> None:
     curses.init_pair(6, PLAYER_COLOR, -1)
     curses.init_pair(7, ENEMY_COLOR, -1)
     curses.init_pair(8, SWORD_COLOR, -1)
+    curses.init_pair(9, STAIR_COLOR, -1)
 
 
-def is_inside(x: int, y: int, grid: List[List[str]]) -> bool:
+def current_grid(state: Dict[str, object]) -> Grid:
+    floors = state["floors"]
+    floor = int(state["floor"])
+    return floors[floor]  # type: ignore[index]
+
+
+def is_inside(x: int, y: int, grid: Grid) -> bool:
     return 0 <= y < len(grid) and 0 <= x < len(grid[y])
 
 
-def cell_at(grid: List[List[str]], x: int, y: int) -> str:
+def cell_at(grid: Grid, x: int, y: int) -> str:
     if not is_inside(x, y, grid):
-        return '#'
+        return "#"
     return grid[y][x]
 
 
 def is_passable(cell: str) -> bool:
-    return cell in {'.', ' ', 'S', 'M'}
+    return cell in {".", " ", "S", "M", "<", ">"}
 
 
 def facing_vector(facing: int) -> Tuple[float, float]:
@@ -133,7 +222,7 @@ def facing_vector(facing: int) -> Tuple[float, float]:
 
 
 def cast_perspective_ray(
-    grid: List[List[str]],
+    grid: Grid,
     origin_x: float,
     origin_y: float,
     dir_x: float,
@@ -172,7 +261,7 @@ def cast_perspective_ray(
             side = 1
 
         cell = cell_at(grid, map_x, map_y)
-        if cell in {'#', 'D'}:
+        if cell in {"#", "D"}:
             if side == 0:
                 distance = (map_x - origin_x + (1 - step_x) / 2.0) / (dir_x if abs(dir_x) > 1e-9 else 1e-9)
             else:
@@ -181,16 +270,12 @@ def cast_perspective_ray(
 
         approx_distance = min(side_dist_x, side_dist_y)
         if approx_distance > max_depth:
-            return max_depth, ' ', side
+            return max_depth, " ", side
 
 
 def wall_char(distance: float, side: int, cell: str) -> str:
-    if cell == 'D':
-        return '+' if side == 0 else '|'
-    if cell == 'M':
-        return 'M'
-    if cell == 'S':
-        return '/'
+    if cell == "D":
+        return "+" if side == 0 else "|"
     shades = "█▓▒░."
     index = min(len(shades) - 1, int(distance * 0.55) + side)
     return shades[index]
@@ -198,80 +283,35 @@ def wall_char(distance: float, side: int, cell: str) -> str:
 
 def floor_char(row: int, horizon: int, height: int) -> str:
     if row <= horizon:
-        return ' '
+        return " "
     ratio = (row - horizon) / max(1, height - horizon - 1)
     if ratio < 0.18:
-        return '_'
+        return "_"
     if ratio < 0.40:
-        return '.'
+        return "."
     if ratio < 0.68:
-        return ','
-    return '`'
+        return ","
+    return "`"
 
 
-def find_nearest_walkable(grid: List[List[str]], x: int, y: int) -> Optional[Vec2]:
-    if is_passable(cell_at(grid, x, y)) and cell_at(grid, x, y) != 'M':
-        return x, y
-    max_radius = max(len(grid), max((len(row) for row in grid), default=0))
-    for radius in range(1, max_radius + 1):
-        for ny in range(y - radius, y + radius + 1):
-            for nx in range(x - radius, x + radius + 1):
-                if abs(nx - x) + abs(ny - y) != radius:
-                    continue
-                if is_passable(cell_at(grid, nx, ny)) and cell_at(grid, nx, ny) != 'M':
-                    return nx, ny
+def find_tile(grid: Grid, tile: str) -> Optional[Vec2]:
+    for y, row in enumerate(grid):
+        for x, cell in enumerate(row):
+            if cell == tile:
+                return x, y
     return None
 
 
-def normalize_enemies(grid: List[List[str]]) -> None:
-    enemies: List[Vec2] = []
-    for y, row in enumerate(grid):
-        for x, cell in enumerate(row):
-            if cell == 'M':
-                enemies.append((x, y))
-                grid[y][x] = '.'
-
-    used: set[Vec2] = set()
-    for x, y in enemies:
-        target = find_nearest_walkable(grid, x, y)
-        if target is None:
-            continue
-        if target in used:
-            alternative = None
-            tx, ty = target
-            for radius in range(1, max(len(grid), max((len(row) for row in grid), default=0)) + 1):
-                found = False
-                for ny in range(ty - radius, ty + radius + 1):
-                    for nx in range(tx - radius, tx + radius + 1):
-                        pos = (nx, ny)
-                        if pos in used:
-                            continue
-                        if is_passable(cell_at(grid, nx, ny)) and cell_at(grid, nx, ny) != 'M':
-                            alternative = pos
-                            found = True
-                            break
-                    if found:
-                        break
-                if found:
-                    break
-            target = alternative
-        if target is None:
-            continue
-        used.add(target)
-        tx, ty = target
-        grid[ty][tx] = 'M'
-
-
-def find_visible_tile(grid: List[List[str]], px: int, py: int, facing: int, tile: str) -> Optional[Tuple[int, int, int]]:
+def find_visible_tile(grid: Grid, px: int, py: int, facing: int, tile: str) -> Optional[Tuple[int, int, int]]:
     dx, dy = DIRECTIONS[facing]
     rx, ry = -dy, dx
     for distance in range(1, 6):
         cx = px + dx * distance
         cy = py + dy * distance
         center = cell_at(grid, cx, cy)
-        if center == '#':
+        if center == "#":
             return None
-        if center == 'D':
+        if center == "D":
             break
         if center == tile:
             return distance, 0, 0
@@ -284,30 +324,34 @@ def find_visible_tile(grid: List[List[str]], px: int, py: int, facing: int, tile
     return None
 
 
-def enemy_in_view(grid: List[List[str]], px: int, py: int, facing: int) -> Optional[Tuple[int, int, int]]:
-    return find_visible_tile(grid, px, py, facing, 'M')
+def enemy_in_view(grid: Grid, px: int, py: int, facing: int) -> Optional[Tuple[int, int, int]]:
+    return find_visible_tile(grid, px, py, facing, "M")
 
 
-def sword_in_view(grid: List[List[str]], px: int, py: int, facing: int) -> Optional[Tuple[int, int, int]]:
-    return find_visible_tile(grid, px, py, facing, 'S')
+def sword_in_view(grid: Grid, px: int, py: int, facing: int) -> Optional[Tuple[int, int, int]]:
+    return find_visible_tile(grid, px, py, facing, "S")
+
+
+def stairs_in_view(grid: Grid, px: int, py: int, facing: int) -> Optional[Tuple[int, int, int, str]]:
+    for tile in ("<", ">"):
+        visible = find_visible_tile(grid, px, py, facing, tile)
+        if visible is not None:
+            distance, side, lateral = visible
+            return distance, side, lateral, tile
+    return None
 
 
 def render_enemy_sprite(items: List[DrawItem], width: int, height: int, distance: int, side: int) -> None:
     perspective_scale = max(0.55, 2.4 / (distance + 0.35))
-    if side == 0:
-        perspective_scale *= 1.15
-    else:
-        perspective_scale *= 0.72
-
+    perspective_scale *= 1.15 if side == 0 else 0.72
     center_x = width // 2 + side * max(3, width // max(8, 9 + distance * 2))
     floor_y = height - 4
     sprite = [
-        '  M  ',
-        ' /#\\ ',
-        '/###\\',
-        ' / \\',
+        "  M  ",
+        " /#\\ ",
+        "/###\\",
+        " / \\",
     ]
-
     sprite_height = max(2, int(round(len(sprite) * perspective_scale)))
     sprite_width = max(3, int(round(len(sprite[0]) * perspective_scale * (0.95 if side == 0 else 0.85))))
     sprite_top = max(1, floor_y - sprite_height + 1)
@@ -320,27 +364,22 @@ def render_enemy_sprite(items: List[DrawItem], width: int, height: int, distance
         for target_col in range(sprite_width):
             source_col = min(len(row) - 1, int(target_col / max(0.001, sprite_width / len(row))))
             ch = row[source_col]
-            if ch != ' ':
+            if ch != " ":
                 items.append((sy, start_x + target_col, ch, 7))
 
 
 def render_sword_sprite(items: List[DrawItem], width: int, height: int, distance: int, side: int) -> None:
     perspective_scale = max(0.45, 2.0 / (distance + 0.2))
-    if side == 0:
-        perspective_scale *= 1.18
-    else:
-        perspective_scale *= 0.72
-
+    perspective_scale *= 1.18 if side == 0 else 0.72
     center_x = width // 2 + side * max(2, width // max(10, 11 + distance * 2))
     floor_y = height - 4
     sprite = [
-        '  /  ',
-        ' /   ',
-        '/    ',
-        '||== ',
-        '||   ',
+        "  /  ",
+        " /   ",
+        "/    ",
+        "||== ",
+        "||   ",
     ]
-
     sprite_height = max(2, int(round(len(sprite) * perspective_scale)))
     sprite_width = max(2, int(round(len(sprite[0]) * perspective_scale * (0.92 if side == 0 else 0.82))))
     sprite_top = max(1, floor_y - sprite_height + 1)
@@ -353,11 +392,42 @@ def render_sword_sprite(items: List[DrawItem], width: int, height: int, distance
         for target_col in range(sprite_width):
             source_col = min(len(row) - 1, int(target_col / max(0.001, sprite_width / len(row))))
             ch = row[source_col]
-            if ch != ' ':
+            if ch != " ":
                 items.append((sy, start_x + target_col, ch, 8))
 
 
-def render_view(grid: List[List[str]], px: int, py: int, facing: int, width: int, height: int) -> List[DrawItem]:
+def render_stairs_sprite(items: List[DrawItem], width: int, height: int, distance: int, side: int, tile: str) -> None:
+    perspective_scale = max(0.50, 2.2 / (distance + 0.25))
+    center_x = width // 2 + side * max(2, width // max(9, 10 + distance * 2))
+    floor_y = height - 4
+    sprite = [
+        "_____",
+        " ___ ",
+        "  __ ",
+        "   _ ",
+    ] if tile == ">" else [
+        " _   ",
+        " __  ",
+        " ___ ",
+        "_____",
+    ]
+    sprite_height = max(2, int(round(len(sprite) * perspective_scale)))
+    sprite_width = max(3, int(round(len(sprite[0]) * perspective_scale)))
+    sprite_top = max(1, floor_y - sprite_height + 1)
+
+    for target_row in range(sprite_height):
+        source_row = min(len(sprite) - 1, int(target_row / max(0.001, perspective_scale)))
+        row = sprite[source_row]
+        sy = sprite_top + target_row
+        start_x = center_x - sprite_width // 2
+        for target_col in range(sprite_width):
+            source_col = min(len(row) - 1, int(target_col / max(0.001, sprite_width / len(row))))
+            ch = row[source_col]
+            if ch != " ":
+                items.append((sy, start_x + target_col, ch, 9))
+
+
+def render_view(grid: Grid, px: int, py: int, facing: int, width: int, height: int) -> List[DrawItem]:
     items: List[DrawItem] = []
     horizon = height // 2
     cam_x, cam_y = px + 0.5, py + 0.5
@@ -374,31 +444,35 @@ def render_view(grid: List[List[str]], px: int, py: int, facing: int, width: int
         ray_dir_x = dir_x + plane_x * camera_x
         ray_dir_y = dir_y + plane_y * camera_x
         distance, cell, side = cast_perspective_ray(grid, cam_x, cam_y, ray_dir_x, ray_dir_y)
-
-        if cell == ' ':
+        if cell == " ":
             continue
 
         line_height = int((height * 0.92) / max(0.001, distance))
         draw_start = max(1, horizon - line_height // 2)
         draw_end = min(height - 3, horizon + line_height // 2)
         char = wall_char(distance, side, cell)
-        color = 2 if cell == 'D' else 7 if cell == 'M' else 8 if cell == 'S' else 1
+        color = 2 if cell == "D" else 1
 
         for y in range(draw_start, draw_end + 1):
             draw_char = char
-            if cell == 'D':
+            if cell == "D":
                 mid = (draw_start + draw_end) // 2
                 if abs(y - mid) <= max(1, line_height // 10):
-                    draw_char = '='
+                    draw_char = "="
                 elif x % 2 == 0:
-                    draw_char = '|'
-            elif side == 1 and draw_char in {'█', '▓', '▒'}:
-                draw_char = {'█': '▓', '▓': '▒', '▒': '░'}.get(draw_char, draw_char)
+                    draw_char = "|"
+            elif side == 1 and draw_char in {"█", "▓", "▒"}:
+                draw_char = {"█": "▓", "▓": "▒", "▒": "░"}.get(draw_char, draw_char)
             items.append((y, x, draw_char, color))
 
         ceiling_limit = max(1, draw_start - 1)
         if ceiling_limit > 1 and x % 3 == 0:
-            items.append((ceiling_limit, x, '_', 4))
+            items.append((ceiling_limit, x, "_", 4))
+
+    visible_stairs = stairs_in_view(grid, px, py, facing)
+    if visible_stairs is not None:
+        distance, side, _, tile = visible_stairs
+        render_stairs_sprite(items, width, height, distance, side, tile)
 
     visible_sword = sword_in_view(grid, px, py, facing)
     if visible_sword is not None:
@@ -413,8 +487,14 @@ def render_view(grid: List[List[str]], px: int, py: int, facing: int, width: int
     return items
 
 
-def draw_minimap(stdscr, grid: List[List[str]], px: int, py: int, facing: int, top: int, left: int) -> None:
+def draw_minimap(stdscr, grid: Grid, px: int, py: int, facing: int, floor_index: int, top: int, left: int) -> None:
     view_radius = 4
+    label = f"F{floor_index + 1}"
+    try:
+        stdscr.addstr(top - 1, left, label, curses.color_pair(9) | curses.A_BOLD)
+    except curses.error:
+        pass
+
     for dy in range(-view_radius, view_radius + 1):
         for dx in range(-view_radius, view_radius + 1):
             mx = px + dx
@@ -422,104 +502,149 @@ def draw_minimap(stdscr, grid: List[List[str]], px: int, py: int, facing: int, t
             ch = cell_at(grid, mx, my)
             sy = top + dy + view_radius
             sx = left + (dx + view_radius) * 2
-            if ch == '#':
-                char = '##'
+            if ch == "#":
+                char = "##"
                 attr = curses.color_pair(5)
-            elif ch == 'D':
-                char = '[]'
+            elif ch == "D":
+                char = "[]"
                 attr = curses.color_pair(2) | curses.A_BOLD
-            elif ch == 'M':
-                char = 'MM'
+            elif ch == "M":
+                char = "MM"
                 attr = curses.color_pair(7) | curses.A_BOLD
-            elif ch == 'S':
-                char = '/='
+            elif ch == "S":
+                char = "/="
                 attr = curses.color_pair(8) | curses.A_BOLD
+            elif ch == ">":
+                char = ">>"
+                attr = curses.color_pair(9) | curses.A_BOLD
+            elif ch == "<":
+                char = "<<"
+                attr = curses.color_pair(9) | curses.A_BOLD
             else:
-                char = '  '
+                char = "  "
                 attr = curses.color_pair(4)
             try:
                 stdscr.addstr(sy, sx, char, attr)
             except curses.error:
                 pass
 
-    arrow = ['^', '>', 'v', '<'][facing]
+    arrow = ["^", ">", "v", "<"][facing]
     try:
         stdscr.addstr(top + view_radius, left + view_radius * 2, arrow, curses.color_pair(6) | curses.A_BOLD)
     except curses.error:
         pass
 
 
-def collect_tile(state: Dict[str, int | str], grid: List[List[str]]) -> None:
-    x = int(state['x'])
-    y = int(state['y'])
-    if cell_at(grid, x, y) == 'S':
-        grid[y][x] = '.'
-        state['has_sword'] = 1
-        state['message'] = 'You take the sword. Fighting is now easier.'
+def collect_tile(state: Dict[str, object], grid: Grid) -> None:
+    x = int(state["x"])
+    y = int(state["y"])
+    if cell_at(grid, x, y) == "S":
+        grid[y][x] = "."
+        state["has_sword"] = True
+        state["message"] = "You take the sword. Fighting is now easier."
 
 
-def try_move(state: Dict[str, int | str], grid: List[List[str]], step: int) -> None:
-    dx, dy = DIRECTIONS[int(state['facing'])]
-    nx = int(state['x']) + dx * step
-    ny = int(state['y']) + dy * step
+def try_move(state: Dict[str, object], step: int) -> None:
+    grid = current_grid(state)
+    dx, dy = DIRECTIONS[int(state["facing"])]
+    nx = int(state["x"]) + dx * step
+    ny = int(state["y"]) + dy * step
     if is_passable(cell_at(grid, nx, ny)):
-        state['x'] = nx
-        state['y'] = ny
+        state["x"] = nx
+        state["y"] = ny
         collect_tile(state, grid)
 
 
-def try_strafe(state: Dict[str, int | str], grid: List[List[str]], step: int) -> None:
-    facing = int(state['facing'])
+def try_strafe(state: Dict[str, object], step: int) -> None:
+    grid = current_grid(state)
+    facing = int(state["facing"])
     side = (facing + step) % 4
     dx, dy = DIRECTIONS[side]
-    nx = int(state['x']) + dx
-    ny = int(state['y']) + dy
+    nx = int(state["x"]) + dx
+    ny = int(state["y"]) + dy
     if is_passable(cell_at(grid, nx, ny)):
-        state['x'] = nx
-        state['y'] = ny
+        state["x"] = nx
+        state["y"] = ny
         collect_tile(state, grid)
 
 
-def use_action(state: Dict[str, int | str], grid: List[List[str]]) -> str:
-    dx, dy = DIRECTIONS[int(state['facing'])]
-    tx = int(state['x']) + dx
-    ty = int(state['y']) + dy
+def travel_stairs(state: Dict[str, object], delta: int) -> str:
+    current_floor = int(state["floor"])
+    floors = state["floors"]  # type: ignore[assignment]
+    new_floor = current_floor + delta
+    if not (0 <= new_floor < len(floors)):
+        return "The stairs go nowhere."
+
+    destination_tile = "<" if delta > 0 else ">"
+    destination = find_tile(floors[new_floor], destination_tile)
+    if destination is None:
+        return "The matching stairs cannot be found."
+
+    state["floor"] = new_floor
+    state["x"], state["y"] = destination
+    collect_tile(state, floors[new_floor])
+    return f"You walk {'down' if delta > 0 else 'up'} the stairs to floor {new_floor + 1}."
+
+
+def use_action(state: Dict[str, object]) -> str:
+    grid = current_grid(state)
+    dx, dy = DIRECTIONS[int(state["facing"])]
+    tx = int(state["x"]) + dx
+    ty = int(state["y"]) + dy
     target = cell_at(grid, tx, ty)
-    if target == 'D':
-        grid[ty][tx] = '.'
-        return 'You open the door.'
-    if target == 'M':
-        has_sword = bool(state['has_sword'])
+    if target == "D":
+        grid[ty][tx] = "."
+        return "You open the door."
+    if target == "M":
+        has_sword = bool(state["has_sword"])
         cost = ATTACK_COST_WITH_SWORD if has_sword else ATTACK_COST_NO_SWORD
-        energy = int(state['energy'])
+        energy = int(state["energy"])
         if energy < cost:
-            return 'Too tired to fight. Wait to regain some energy.'
-        state['energy'] = max(0, energy - cost)
-        grid[ty][tx] = '.'
-        state['score'] = int(state['score']) + 1
-        return f'You defeat the enemy. Energy -{cost}.'
-    if target == 'S':
-        grid[ty][tx] = '.'
-        state['has_sword'] = 1
-        return 'You take the sword.'
-    return 'Nothing happens.'
+            return "Too tired to fight. Wait to regain some energy."
+        state["energy"] = max(0, energy - cost)
+        grid[ty][tx] = "."
+        state["score"] = int(state["score"]) + 1
+        return f"You defeat the enemy. Energy -{cost}."
+    if target == "S":
+        grid[ty][tx] = "."
+        state["has_sword"] = True
+        return "You take the sword."
+    if target == ">":
+        return travel_stairs(state, 1)
+    if target == "<":
+        return travel_stairs(state, -1)
+    return "Nothing happens."
 
 
-def draw_scene(stdscr, grid: List[List[str]], state: Dict[str, int | str]) -> None:
+def use_current_tile(state: Dict[str, object]) -> bool:
+    grid = current_grid(state)
+    tile = cell_at(grid, int(state["x"]), int(state["y"]))
+    if tile == ">":
+        state["message"] = travel_stairs(state, 1)
+        return True
+    if tile == "<":
+        state["message"] = travel_stairs(state, -1)
+        return True
+    return False
+
+
+def draw_scene(stdscr, state: Dict[str, object]) -> None:
+    grid = current_grid(state)
     height, width = stdscr.getmaxyx()
     stdscr.erase()
 
-    title = ' ANSI Dungeon - perspective crawler view '
-    energy = int(state['energy'])
+    title = " ANSI Dungeon - SQLite map "
+    energy = int(state["energy"])
     filled = max(0, min(MAX_ENERGY, energy))
     empty = max(0, MAX_ENERGY - filled)
-    health_bar = '[' + ('#' * filled) + ('-' * empty) + ']'
+    health_bar = "[" + ("#" * filled) + ("-" * empty) + "]"
     status = (
         f" {health_bar} {energy}/{MAX_ENERGY}"
+        f" floor:{int(state['floor']) + 1}/{len(state['floors'])}"
         f" pos:{state['x']},{state['y']} facing:{DIRECTION_NAMES[int(state['facing'])]}"
         f" sword:{'yes' if bool(state['has_sword']) else 'no'} defeated:{state['score']} "
     )
-    help_text = ' arrows/WASD move | q/e turn | z/c strafe | space act/fight | . wait | m map | x quit '
+    help_text = " arrows/WASD move | q/e turn | z/c strafe | space act | . wait | m map | x quit "
     view_height = max(6, height - 3)
 
     if width > len(title) + 2:
@@ -528,29 +653,40 @@ def draw_scene(stdscr, grid: List[List[str]], state: Dict[str, int | str]) -> No
         except curses.error:
             pass
 
-    for y, x, ch, color in render_view(grid, int(state['x']), int(state['y']), int(state['facing']), width, view_height):
+    for y, x, ch, color in render_view(grid, int(state["x"]), int(state["y"]), int(state["facing"]), width, view_height):
         if 1 <= y < height - 3 and 0 <= x < width:
             try:
                 attr = curses.color_pair(color)
-                if color in (2, 3):
+                if color in (2, 3, 7, 8, 9):
                     attr |= curses.A_BOLD
                 stdscr.addch(y, x, ch, attr)
             except curses.error:
                 pass
 
-    if bool(state['show_map']):
-        draw_minimap(stdscr, grid, int(state['x']), int(state['y']), int(state['facing']), 2, 2)
+    if bool(state["show_map"]):
+        draw_minimap(stdscr, grid, int(state["x"]), int(state["y"]), int(state["facing"]), int(state["floor"]), 3, 2)
 
+    try:
+        stdscr.addstr(height - 3, 1, help_text[: max(0, width - 2)], curses.color_pair(3))
+    except curses.error:
+        pass
     try:
         stdscr.addstr(height - 2, 1, status[: max(0, width - 2)], curses.color_pair(4) | curses.A_BOLD)
     except curses.error:
         pass
     try:
-        stdscr.addstr(height - 1, 1, (help_text + str(state['message']))[: max(0, width - 2)], curses.color_pair(3))
+        stdscr.addstr(height - 1, 1, str(state["message"])[: max(0, width - 2)], curses.color_pair(9))
     except curses.error:
         pass
 
-    stdscr.refresh()
+
+def find_start_position(floors: List[Grid]) -> Tuple[int, int, int]:
+    for floor_index, grid in enumerate(floors):
+        for y, row in enumerate(grid):
+            for x, cell in enumerate(row):
+                if cell in {".", "S", "<", ">", "M", " "}:
+                    return floor_index, x, y
+    return 0, 1, 1
 
 
 def run(stdscr) -> int:
@@ -559,60 +695,75 @@ def run(stdscr) -> int:
     stdscr.keypad(True)
     setup_colors()
 
-    grid = [list(row) for row in load_map_data()]
-    normalize_enemies(grid)
-    state: Dict[str, int | str] = {
-        'x': 1,
-        'y': 1,
-        'facing': 1,
-        'show_map': 1,
-        'message': 'Find the sword, then defeat enemies. Keep your energy up.',
-        'energy': START_ENERGY,
-        'has_sword': 0,
-        'score': 0,
-        'alive': 1,
+    floors = load_floors()
+    start_floor, start_x, start_y = find_start_position(floors)
+    state: Dict[str, object] = {
+        "floors": floors,
+        "floor": start_floor,
+        "x": start_x,
+        "y": start_y,
+        "facing": 1,
+        "energy": START_ENERGY,
+        "score": 0,
+        "has_sword": False,
+        "show_map": True,
+        "message": f"Loaded dungeon from {DB_PATH.name}.",
     }
+    collect_tile(state, current_grid(state))
 
     while True:
-        draw_scene(stdscr, grid, state)
+        draw_scene(stdscr, state)
+        stdscr.refresh()
         key = stdscr.getch()
-        state['message'] = ''
 
-        if not bool(state['alive']):
+        if key in (ord("x"), ord("X")):
             break
-
-        if key in (ord('x'), ord('X')):
-            break
-        elif key in (ord('q'), ord('Q')):
-            state['facing'] = (int(state['facing']) - 1) % 4
-        elif key in (ord('e'), ord('E')):
-            state['facing'] = (int(state['facing']) + 1) % 4
-        elif key in (curses.KEY_UP, ord('w'), ord('W')):
-            try_move(state, grid, 1)
-        elif key in (curses.KEY_DOWN, ord('s'), ord('S')):
-            try_move(state, grid, -1)
-        elif key in (ord('z'), ord('Z')):
-            try_strafe(state, grid, -1)
-        elif key in (ord('c'), ord('C')):
-            try_strafe(state, grid, 1)
-        elif key == ord(' '):
-            state['message'] = use_action(state, grid)
-        elif key in (ord('.'), ord(',')):
-            previous = int(state['energy'])
-            state['energy'] = min(MAX_ENERGY, previous + WAIT_ENERGY_GAIN)
-            if int(state['energy']) > previous:
-                state['message'] = 'You wait and regain a little energy.'
-            else:
-                state['message'] = 'You wait and feel fully rested.'
-        elif key in (ord('m'), ord('M')):
-            state['show_map'] = 0 if bool(state['show_map']) else 1
+        if key in (ord("q"), ord("Q")):
+            state["facing"] = (int(state["facing"]) - 1) % 4
+            state["message"] = "You turn left."
+        elif key in (ord("e"), ord("E")):
+            state["facing"] = (int(state["facing"]) + 1) % 4
+            state["message"] = "You turn right."
+        elif key in (curses.KEY_UP, ord("w"), ord("W")):
+            old_pos = (state["x"], state["y"])
+            try_move(state, 1)
+            state["message"] = "You move forward." if old_pos != (state["x"], state["y"]) else "A wall blocks your way."
+            use_current_tile(state)
+        elif key in (curses.KEY_DOWN, ord("s"), ord("S")):
+            old_pos = (state["x"], state["y"])
+            try_move(state, -1)
+            state["message"] = "You move backward." if old_pos != (state["x"], state["y"]) else "You cannot move there."
+            use_current_tile(state)
+        elif key in (ord("z"), ord("Z")):
+            old_pos = (state["x"], state["y"])
+            try_strafe(state, -1)
+            state["message"] = "You sidestep left." if old_pos != (state["x"], state["y"]) else "Blocked on the left."
+            use_current_tile(state)
+        elif key in (ord("c"), ord("C")):
+            old_pos = (state["x"], state["y"])
+            try_strafe(state, 1)
+            state["message"] = "You sidestep right." if old_pos != (state["x"], state["y"]) else "Blocked on the right."
+            use_current_tile(state)
+        elif key in (ord("m"), ord("M")):
+            state["show_map"] = not bool(state["show_map"])
+            state["message"] = f"Map {'shown' if state['show_map'] else 'hidden'}."
+        elif key in (ord("."),):
+            state["energy"] = min(MAX_ENERGY, int(state["energy"]) + WAIT_ENERGY_GAIN)
+            state["message"] = "You wait and regain a little energy."
+        elif key in (ord(" "), ord("\n")):
+            state["message"] = use_action(state)
+        elif key == ord(">"):
+            state["message"] = travel_stairs(state, 1)
+        elif key == ord("<"):
+            state["message"] = travel_stairs(state, -1)
 
     return 0
 
 
 def main() -> int:
+    initialize_map_db(DB_PATH)
     return curses.wrapper(run)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     raise SystemExit(main())

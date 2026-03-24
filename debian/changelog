@@ -1,3 +1,11 @@
+dungeona (0.2.0-1) trixie; urgency=low
+
+  * Merge upstream version with multi-floor support.
+  * Update scripts to use per-user database path natively.
+  * Target Debian 13 (Trixie).
+
+ -- Jules <jules@example.com>  Tue, 24 Mar 2026 18:53:12 +0000
+
 dungeona (0.1.0-1) unstable; urgency=low
 
   * Initial Debian package.

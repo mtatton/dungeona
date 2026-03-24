@@ -10,12 +10,5 @@
 
 override_dh_install:
 	# ensure wrapper scripts are executable in source before dh_install copies them
-	chmod 755 debian/usrbin/dungeona debian/usrbin/dungeon_editor || true
+	chmod 755 debian/usrbin/dungeona debian/usrbin/dungeona-editor || true
 	dh_install
-	# Ensure installed python scripts use per-user data dir for the DB
-	# (replace any direct package-local DB references with XDG/home path)
-	for f in debian/tmp/usr/lib/dungeona/*.py; do \
-		if [ -f "$f" ]; then \
-			sed -i "s|Path(__file__).with_name('dungeon_map.db')|Path.home() / '.local' / 'share' / 'dungeona' / 'dungeon_map.db'|g" "$f" || true; \
-		fi; \
-	done || true
