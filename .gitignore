@@ -3,3 +3,6 @@ debian/dungeona.substvars
 debian/files
 debian/debhelper-build-stamp
 debian/.debhelper/
+debian/dungeona.install
+debian/dungeona.postinst.debhelper
+debian/dungeona.prerm.debhelper

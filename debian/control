@@ -13,7 +13,7 @@ Rules-Requires-Root: no
 Package: dungeona
 # This package installs pure-Python scripts; mark as arch: all
 Architecture: all
-Depends: ${misc:Depends}, ${python3:Depends}, libncursesw6, libsqlite3-0
+Depends: ${misc:Depends}, ${python3:Depends}, libncursesw6, libsqlite3-0, python3-evdev
 Description: lightweight dungeon game and editor (Python)
  Dungeona is a small dungeon-crawling game with a simple map editor.
  It is packaged as Python scripts and supporting data files.

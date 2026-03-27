@@ -5,6 +5,19 @@ import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from ans import AnsiTexture, load_ans_texture
+import evdev
+
+WALL_TEXTURE_FILES = {"#": "wall.ans", "D": "door.ans"}
+TEXTURE_DIR = Path("/usr/lib/dungeona/textures")
+
+def get_gamepad():
+    for path in evdev.list_devices():
+        dev = evdev.InputDevice(path)
+        if dev.info.vendor == 0x054c and dev.info.product == 0x0ce6:
+            return dev
+    return None
+
 Vec2 = Tuple[int, int]
 DrawItem = Tuple[int, int, str, int]
 FloorMap = List[str]
@@ -246,6 +259,27 @@ def setup_colors() -> None:
     curses.init_pair(10, QUEST_COLOR, -1)
 
 
+def load_wall_textures() -> Dict[str, AnsiTexture]:
+    textures: Dict[str, AnsiTexture] = {}
+    for tile, filename in WALL_TEXTURE_FILES.items():
+        path = TEXTURE_DIR / filename
+        if path.exists():
+            try:
+                textures[tile] = load_ans_texture(path)
+            except Exception:
+                pass
+    return textures
+
+
+def texture_char_for_column(texture: Optional[AnsiTexture], x_ratio: float, y_ratio: float, fallback: str) -> str:
+    if texture is None or texture.width <= 0 or texture.height <= 0:
+        return fallback
+    tx = min(texture.width - 1, max(0, int(x_ratio * max(1, texture.width - 1))))
+    ty = min(texture.height - 1, max(0, int(y_ratio * max(1, texture.height - 1))))
+    sampled = texture.sample_char(tx, ty, fallback)
+    return sampled if sampled.strip() else fallback
+
+
 def current_grid(state: Dict[str, object]) -> Grid:
     floors = state["floors"]
     floor = int(state["floor"])
@@ -288,7 +322,7 @@ def cast_perspective_ray(
     dir_x: float,
     dir_y: float,
     max_depth: float = MAX_RENDER_DEPTH,
-) -> Tuple[float, str, int]:
+) -> Tuple[float, str, int, float]:
     map_x = int(origin_x)
     map_y = int(origin_y)
 
@@ -324,13 +358,18 @@ def cast_perspective_ray(
         if cell in {"#", "D"}:
             if side == 0:
                 distance = (map_x - origin_x + (1 - step_x) / 2.0) / (dir_x if abs(dir_x) > 1e-9 else 1e-9)
+                wall_hit = origin_y + distance * dir_y
             else:
                 distance = (map_y - origin_y + (1 - step_y) / 2.0) / (dir_y if abs(dir_y) > 1e-9 else 1e-9)
-            return max(0.001, distance), cell, side
+                wall_hit = origin_x + distance * dir_x
+            wall_hit -= int(wall_hit)
+            if (side == 0 and dir_x > 0) or (side == 1 and dir_y < 0):
+                wall_hit = 1.0 - wall_hit
+            return max(0.001, distance), cell, side, wall_hit
 
         approx_distance = min(side_dist_x, side_dist_y)
         if approx_distance > max_depth:
-            return max_depth, " ", side
+            return max_depth, " ", side, 0.0
 
 
 def wall_char(distance: float, side: int, cell: str) -> str:
@@ -532,7 +571,7 @@ def render_stairs_sprite(items: List[DrawItem], width: int, height: int, distanc
                 items.append((sy, start_x + target_col, ch, 9))
 
 
-def render_view(grid: Grid, px: int, py: int, facing: int, width: int, height: int) -> List[DrawItem]:
+def render_view(grid: Grid, px: int, py: int, facing: int, width: int, height: int, wall_textures: Optional[Dict[str, AnsiTexture]] = None) -> List[DrawItem]:
     items: List[DrawItem] = []
     horizon = height // 2
     cam_x, cam_y = px + 0.5, py + 0.5
@@ -548,7 +587,7 @@ def render_view(grid: Grid, px: int, py: int, facing: int, width: int, height: i
         camera_x = 2.0 * x / max(1, width - 1) - 1.0
         ray_dir_x = dir_x + plane_x * camera_x
         ray_dir_y = dir_y + plane_y * camera_x
-        distance, cell, side = cast_perspective_ray(grid, cam_x, cam_y, ray_dir_x, ray_dir_y)
+        distance, cell, side, wall_hit = cast_perspective_ray(grid, cam_x, cam_y, ray_dir_x, ray_dir_y)
         if cell == " ":
             continue
 
@@ -557,16 +596,20 @@ def render_view(grid: Grid, px: int, py: int, facing: int, width: int, height: i
         draw_end = min(height - 3, horizon + line_height // 2)
         char = wall_char(distance, side, cell)
         color = 2 if cell == "D" else 1
+        texture = (wall_textures or {}).get(cell)
 
         for y in range(draw_start, draw_end + 1):
             draw_char = char
+            if texture is not None:
+                y_ratio = (y - draw_start) / max(1, draw_end - draw_start)
+                draw_char = texture_char_for_column(texture, wall_hit, y_ratio, draw_char)
             if cell == "D":
                 mid = (draw_start + draw_end) // 2
                 if abs(y - mid) <= max(1, line_height // 10):
                     draw_char = "="
-                elif x % 2 == 0:
+                elif x % 2 == 0 and texture is None:
                     draw_char = "|"
-            elif side == 1 and draw_char in {"█", "▓", "▒"}:
+            elif side == 1 and texture is None and draw_char in {"█", "▓", "▒"}:
                 draw_char = {"█": "▓", "▓": "▒", "▒": "░"}.get(draw_char, draw_char)
             items.append((y, x, draw_char, color))
 
@@ -821,12 +864,12 @@ def draw_banner_overlay(stdscr, lines: List[str], color: int) -> None:
                 pass
 
 
-def draw_scene(stdscr, state: Dict[str, object]) -> None:
+def draw_scene(stdscr, state: Dict[str, object], has_joy: bool = False) -> None:
     grid = current_grid(state)
     height, width = stdscr.getmaxyx()
     stdscr.erase()
 
-    title = " ANSI Dungeon - Holy Grail Quest "
+    title = "Dungeona - Holy Grail Quest"
     energy = int(state["energy"])
     filled = max(0, min(MAX_ENERGY, energy))
     empty = max(0, MAX_ENERGY - filled)
@@ -847,7 +890,15 @@ def draw_scene(stdscr, state: Dict[str, object]) -> None:
         except curses.error:
             pass
 
-    for y, x, ch, color in render_view(grid, int(state["x"]), int(state["y"]), int(state["facing"]), width, view_height):
+    for y, x, ch, color in render_view(
+        grid,
+        int(state["x"]),
+        int(state["y"]),
+        int(state["facing"]),
+        width,
+        view_height,
+        state.get("wall_textures"),
+    ):
         if 1 <= y < height - 3 and 0 <= x < width:
             try:
                 attr = curses.color_pair(color)
@@ -888,12 +939,14 @@ def find_start_position(floors: List[Grid]) -> Tuple[int, int, int]:
 
 def run(stdscr) -> int:
     curses.curs_set(0)
+    stdscr.timeout(50)
     stdscr.nodelay(False)
     stdscr.keypad(True)
     setup_colors()
 
     floors = load_floors()
     start_floor, start_x, start_y = find_start_position(floors)
+    wall_textures = load_wall_textures()
     state: Dict[str, object] = {
         "floors": floors,
         "floor": start_floor,
@@ -907,13 +960,48 @@ def run(stdscr) -> int:
         "show_map": True,
         "message": f"Loaded dungeon from {DB_PATH.name}. Find the {QUEST_ITEM_NAME} on floor {QUEST_START_FLOOR + 1} and bring it to the altar on floor {QUEST_TARGET_FLOOR + 1}. Beware of rats, skeletons, and ogres.",
         "show_congrats_banner": False,
+        "wall_textures": wall_textures,
     }
     collect_tile(state, current_grid(state))
 
+    gamepad = get_gamepad()
+    has_joy = gamepad is not None
+    joy_state = {"up": False, "down": False, "left": False, "right": False}
+
     while True:
-        draw_scene(stdscr, state)
+        draw_scene(stdscr, state, has_joy)
         stdscr.refresh()
         key = stdscr.getch()
+
+        # Poll Gamepad
+        if has_joy:
+            try:
+                for event in gamepad.read():
+                    if event.type == evdev.ecodes.EV_ABS:
+                         # 8-bit DualSense: 0-255, center 128
+                         val = event.value
+                         if event.code == evdev.ecodes.ABS_Y: # Left Stick Y
+                             if val < 80: key = curses.KEY_UP
+                             elif val > 170: key = curses.KEY_DOWN
+                         elif event.code == evdev.ecodes.ABS_X: # Left Stick X
+                             if val < 80: key = curses.KEY_LEFT
+                             elif val > 170: key = curses.KEY_RIGHT
+                         elif event.code == evdev.ecodes.ABS_HAT0X: # D-Pad X
+                             if event.value == -1: key = curses.KEY_LEFT
+                             elif event.value == 1: key = curses.KEY_RIGHT
+                         elif event.code == evdev.ecodes.ABS_HAT0Y: # D-Pad Y
+                             if event.value == -1: key = curses.KEY_UP
+                             elif event.value == 1: key = curses.KEY_DOWN
+                    elif event.type == evdev.ecodes.EV_KEY and event.value == 1:
+                         if event.code == evdev.ecodes.BTN_SOUTH: key = ord(" ")
+                         elif event.code == evdev.ecodes.BTN_EAST: key = ord(".")
+                         elif event.code == evdev.ecodes.BTN_NORTH: key = ord("m")
+                         elif event.code == evdev.ecodes.BTN_SELECT: key = ord("x")
+            except:
+                pass
+
+        if key == -1:
+            continue
 
         if bool(state.get("show_congrats_banner")):
             state["show_congrats_banner"] = False
@@ -921,7 +1009,7 @@ def run(stdscr) -> int:
                 break
             continue
 
-        if key in (ord("x"), ord("X")):
+        if key in (ord("x"), ord("X"), 27): # ESC
             break
         if key in (ord("q"), ord("Q")):
             state["facing"] = (int(state["facing"]) - 1) % 4
@@ -937,11 +1025,11 @@ def run(stdscr) -> int:
             old_pos = (state["x"], state["y"])
             try_move(state, -1)
             state["message"] = "You move backward." if old_pos != (state["x"], state["y"]) else "You cannot move there."
-        elif key in (ord("z"), ord("Z")):
+        elif key in (curses.KEY_LEFT, ord("z"), ord("Z")):
             old_pos = (state["x"], state["y"])
             try_strafe(state, -1)
             state["message"] = "You sidestep left." if old_pos != (state["x"], state["y"]) else "Blocked on the left."
-        elif key in (ord("c"), ord("C")):
+        elif key in (curses.KEY_RIGHT, ord("c"), ord("C")):
             old_pos = (state["x"], state["y"])
             try_strafe(state, 1)
             state["message"] = "You sidestep right." if old_pos != (state["x"], state["y"]) else "Blocked on the right."

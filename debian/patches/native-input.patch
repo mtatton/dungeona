@@ -1,0 +1,122 @@
+--- a/dungeona.py
++++ b/dungeona.py
+@@ -6,6 +6,17 @@
+ from typing import Dict, List, Optional, Tuple
+ 
+ from ans import AnsiTexture, load_ans_texture
++import evdev
++
++WALL_TEXTURE_FILES = {"#": "wall.ans", "D": "door.ans"}
++TEXTURE_DIR = Path("/usr/lib/dungeona/textures")
++
++def get_gamepad():
++    for path in evdev.list_devices():
++        dev = evdev.InputDevice(path)
++        if dev.info.vendor == 0x054c and dev.info.product == 0x0ce6:
++            return dev
++    return None
+ 
+ Vec2 = Tuple[int, int]
+ DrawItem = Tuple[int, int, str, int]
+@@ -877,10 +888,10 @@
+                 pass
+ 
+ 
+-def draw_scene(stdscr, state: Dict[str, object]) -> None:
++def draw_scene(stdscr, state: Dict[str, object], has_joy: bool = False) -> None:
+     grid = current_grid(state)
+     height, width = stdscr.getmaxyx()
+-    stdscr.erase()
++    stdscr.erase()
+ 
+     title = "Dungeona - Holy Grail Quest"
+     try:
+@@ -897,7 +908,10 @@
+     except curses.error:
+         pass
+ 
+-    help_text = " arrows/WASD move | q/e turn | z/c strafe | space act | . wait | m map | x quit | quest: take grail to altar "
++    if has_joy:
++        help_text = " 🕹️/🎮 move/turn | ❌ act | ⭕ wait | 📋 map | ⏹️ quit "
++    else:
++        help_text = " arrows/WASD move | q/e turn | z/c strafe | space act | . wait | m map | x quit | quest: take grail to altar "
+     try:
+         stdscr.addstr(height - 1, 0, help_text[:width - 1], curses.color_pair(3) | curses.A_REVERSE)
+     except curses.error:
+@@ -938,6 +952,7 @@
+ 
+ def run(stdscr) -> int:
+     curses.curs_set(0)
++    stdscr.timeout(50)
+     stdscr.nodelay(False)
+     stdscr.keypad(True)
+     setup_colors()
+@@ -959,18 +974,52 @@
+     }
+     collect_tile(state, current_grid(state))
+ 
++    gamepad = get_gamepad()
++    has_joy = gamepad is not None
++    joy_state = {"up": False, "down": False, "left": False, "right": False}
++
+     while True:
+-        draw_scene(stdscr, state)
++        draw_scene(stdscr, state, has_joy)
+         stdscr.refresh()
+         key = stdscr.getch()
+ 
++        # Poll Gamepad
++        if has_joy:
++            try:
++                for event in gamepad.read():
++                    if event.type == evdev.ecodes.EV_ABS:
++                         # 8-bit DualSense: 0-255, center 128
++                         val = event.value
++                         if event.code == evdev.ecodes.ABS_Y: # Left Stick Y
++                             if val < 80: key = curses.KEY_UP
++                             elif val > 170: key = curses.KEY_DOWN
++                         elif event.code == evdev.ecodes.ABS_X: # Left Stick X
++                             if val < 80: key = curses.KEY_LEFT
++                             elif val > 170: key = curses.KEY_RIGHT
++                         elif event.code == evdev.ecodes.ABS_HAT0X: # D-Pad X
++                             if event.value == -1: key = curses.KEY_LEFT
++                             elif event.value == 1: key = curses.KEY_RIGHT
++                         elif event.code == evdev.ecodes.ABS_HAT0Y: # D-Pad Y
++                             if event.value == -1: key = curses.KEY_UP
++                             elif event.value == 1: key = curses.KEY_DOWN
++                    elif event.type == evdev.ecodes.EV_KEY and event.value == 1:
++                         if event.code == evdev.ecodes.BTN_SOUTH: key = ord(" ")
++                         elif event.code == evdev.ecodes.BTN_EAST: key = ord(".")
++                         elif event.code == evdev.ecodes.BTN_NORTH: key = ord("m")
++                         elif event.code == evdev.ecodes.BTN_SELECT: key = ord("x")
++            except:
++                pass
++
++        if key == -1:
++            continue
++
+         if bool(state.get("show_congrats_banner")):
+             state["show_congrats_banner"] = False
+             if key in (ord("x"), ord("X")):
+                 break
+             continue
+ 
+-        if key in (ord("x"), ord("X")):
++        if key in (ord("x"), ord("X"), 27): # ESC
+             break
+         if key in (ord("q"), ord("Q")):
+             state["facing"] = (int(state["facing"]) - 1) % 4
+@@ -987,11 +1036,11 @@
+             old_pos = (state["x"], state["y"])
+             try_move(state, -1)
+             state["message"] = "You move backward." if old_pos != (state["x"], state["y"]) else "You cannot move there."
+-        elif key in (ord("z"), ord("Z")):
++        elif key in (curses.KEY_LEFT, ord("z"), ord("Z")):
+             old_pos = (state["x"], state["y"])
+             try_strafe(state, -1)
+             state["message"] = "You sidestep left." if old_pos != (state["x"], state["y"]) else "Blocked on the left."
+-        elif key in (ord("c"), ord("C")):
++        elif key in (curses.KEY_RIGHT, ord("c"), ord("C")):
+             old_pos = (state["x"], state["y"])
+             try_strafe(state, 1)
+             state["message"] = "You sidestep right." if old_pos != (state["x"], state["y"]) else "Blocked on the right."

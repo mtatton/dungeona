@@ -1,0 +1,32 @@
+.TH dungeona-ans 1 "March 2026" "dungeona 0.3.1" "User Commands"
+.SH NAME
+dungeona-ans \- ANSI/ANS file parser and terminal viewer
+.SH SYNOPSIS
+.B dungeona-ans
+.RI [ options ] " file"
+.SH DESCRIPTION
+.B dungeona-ans
+is a reusable ANSI/ANS file parser and optional terminal viewer. It can be used to view ANSI art files in the terminal or extract their plain text representation. This tool is especially useful for games or applications that use ANSI art as textures or assets.
+.SH OPTIONS
+.TP
+.BI -a , --autoscroll
+Enable autoscroll mode in the viewer.
+.TP
+.B --plain
+Print plain text only, without curses colors.
+.TP
+.B file
+Path to the ANSI/ANS file to view or parse.
+.SH EXAMPLES
+.TP
+View an ANSI file interactively:
+.B dungeona-ans textures/wall.ans
+.TP
+Print the plain text of an ANSI file:
+.B dungeona-ans --plain textures/door.ans
+.SH AUTHOR
+Written by the dungeona project authors.
+.SH SEE ALSO
+dungeona(6), dungeona-editor(1)
+.SH COPYRIGHT
+Copyright 2026. Licensed under the terms described in the LICENSE file.
