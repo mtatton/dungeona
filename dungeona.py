@@ -16,6 +16,7 @@ WALL_TEXTURE_FILES = {
     "#": "wall.ans",
     "D": "door.ans",
 }
+RAT_ANIMATION_FILES = ["rat001.ans", "rat002.ans", "rat003.ans"]
 
 DIRECTIONS: List[Vec2] = [
     (0, -1),
@@ -67,6 +68,7 @@ MONSTER_TYPES: Dict[str, Dict[str, object]] = {
             "(o.o )",
             " /|\\~",
         ],
+        "animated_sprite_key": "rat",
         "defeat": "You skewer the giant rat.",
     },
     "S": {
@@ -250,6 +252,29 @@ def load_wall_textures() -> Dict[str, AnsiTexture]:
             except Exception:
                 pass
     return textures
+
+
+def texture_to_sprite_lines(texture: AnsiTexture) -> List[str]:
+    lines = [line.rstrip() for line in texture.to_plain_lines()]
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines or ["?"]
+
+
+def load_animated_sprites() -> Dict[str, List[List[str]]]:
+    animations: Dict[str, List[List[str]]] = {}
+    frames: List[List[str]] = []
+    for filename in RAT_ANIMATION_FILES:
+        path = TEXTURE_DIR / filename
+        if not path.exists():
+            continue
+        try:
+            frames.append(texture_to_sprite_lines(load_ans_texture(path)))
+        except Exception:
+            continue
+    if frames:
+        animations["rat"] = frames
+    return animations
 
 
 def texture_char_for_column(texture: Optional[AnsiTexture], x_ratio: float, y_ratio: float, fallback: str) -> str:
@@ -447,13 +472,27 @@ def stairs_in_view(grid: Grid, px: int, py: int, facing: int) -> Optional[Tuple[
     return None
 
 
-def render_monster_sprite(items: List[DrawItem], width: int, height: int, distance: int, side: int, monster_tile: str) -> None:
+def render_monster_sprite(
+    items: List[DrawItem],
+    width: int,
+    height: int,
+    distance: int,
+    side: int,
+    monster_tile: str,
+    animated_sprites: Optional[Dict[str, List[List[str]]]] = None,
+    animation_step: int = 0,
+) -> None:
     info = monster_info(monster_tile)
     perspective_scale = max(0.55, 2.4 / (distance + 0.35))
     perspective_scale *= 1.15 if side == 0 else 0.72
     center_x = width // 2 + side * max(3, width // max(8, 9 + distance * 2))
     floor_y = height - 4
     sprite = info["sprite"]  # type: ignore[assignment]
+    animation_key = info.get("animated_sprite_key")
+    if isinstance(animation_key, str) and animated_sprites and animation_key in animated_sprites:
+        frames = animated_sprites[animation_key]
+        if frames:
+            sprite = frames[animation_step % len(frames)]
     color = int(info["color"])
     sprite_height = max(2, int(round(len(sprite) * perspective_scale)))
     sprite_width = max(3, int(round(len(sprite[0]) * perspective_scale * (0.95 if side == 0 else 0.85))))
@@ -556,7 +595,17 @@ def render_stairs_sprite(items: List[DrawItem], width: int, height: int, distanc
                 items.append((sy, start_x + target_col, ch, 9))
 
 
-def render_view(grid: Grid, px: int, py: int, facing: int, width: int, height: int, wall_textures: Optional[Dict[str, AnsiTexture]] = None) -> List[DrawItem]:
+def render_view(
+    grid: Grid,
+    px: int,
+    py: int,
+    facing: int,
+    width: int,
+    height: int,
+    wall_textures: Optional[Dict[str, AnsiTexture]] = None,
+    animated_sprites: Optional[Dict[str, List[List[str]]]] = None,
+    animation_step: int = 0,
+) -> List[DrawItem]:
     items: List[DrawItem] = []
     horizon = height // 2
     cam_x, cam_y = px + 0.5, py + 0.5
@@ -620,7 +669,7 @@ def render_view(grid: Grid, px: int, py: int, facing: int, width: int, height: i
     seen_monster = visible_monster(grid, px, py, facing)
     if seen_monster is not None:
         distance, side, _, tile = seen_monster
-        render_monster_sprite(items, width, height, distance, side, tile)
+        render_monster_sprite(items, width, height, distance, side, tile, animated_sprites, animation_step)
 
     return items
 
@@ -989,6 +1038,8 @@ def draw_scene(stdscr, state: Dict[str, object]) -> None:
         width,
         view_height,
         state.get("wall_textures"),
+        state.get("animated_sprites"),
+        int(state.get("action_count", 0)),
     ):
         if 1 <= y < height - 3 and 0 <= x < width:
             try:
@@ -1037,6 +1088,7 @@ def run(stdscr) -> int:
     floors = load_floors()
     start_floor, start_x, start_y = find_start_position(floors)
     wall_textures = load_wall_textures()
+    animated_sprites = load_animated_sprites()
     state: Dict[str, object] = {
         "floors": floors,
         "floor": start_floor,
@@ -1051,6 +1103,8 @@ def run(stdscr) -> int:
         "message": f"Loaded dungeon from {DB_PATH.name}. Find the {QUEST_ITEM_NAME} on floor {QUEST_START_FLOOR + 1} and bring it to the altar on floor {QUEST_TARGET_FLOOR + 1}. Beware of rats, skeletons, and ogres.",
         "show_congrats_banner": False,
         "wall_textures": wall_textures,
+        "animated_sprites": animated_sprites,
+        "action_count": 0,
         "monster_chase": {},
     }
     collect_tile(state, current_grid(state))
@@ -1116,6 +1170,7 @@ def run(stdscr) -> int:
             acted = True
 
         if acted:
+            state["action_count"] = int(state.get("action_count", 0)) + 1
             advance_world(state)
 
     return 0
