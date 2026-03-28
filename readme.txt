@@ -3,36 +3,42 @@ DUNGEONA
 
 Version
 -------
-Updated README for the project archive: 20260327_dungeona_017.zip
+Updated README for the project archive: 20260328_dungeona_015.zip
 
 Overview
 --------
-Dungeona is a terminal-based first-person dungeon crawler written in Python.
-It uses the built-in curses module for display, stores dungeon layouts in a
-SQLite database, and includes a separate editor for building and validating
-multi-floor dungeon maps.
+Dungeona is a retro-style first-person dungeon crawler written in Python.
+This archive includes:
+- a terminal game built with curses
+- a Tkinter-based GUI frontend
+- a terminal dungeon editor
+- SQLite-backed multi-floor dungeon storage
+- ANSI/ANS texture support for walls, doors, and animated rat art
 
-This build centers on a Holy Grail quest: explore the dungeon, defeat monsters,
-recover the grail, and carry it to the altar on the final floor.
+In the default adventure, your goal is to find the Holy Grail and deliver it
+to the altar on the final floor.
 
-What's new in this build
-------------------------
-Compared with earlier archive versions, this build includes:
-- ANSI texture support for walls and doors
-- animated ANSI rat frames in textures/rat001.ans through textures/rat003.ans
-- monster spotting/chase behavior during play
-- the same built-in multi-floor editor and validator workflow
+What's updated in this build
+----------------------------
+This archive includes everything from the recent textured builds, plus:
+- dungeona_gui.py, a windowed Tkinter frontend for the game
+- animated rat texture frames in textures/rat001.ans through rat003.ans
+- monster spotting and short chase behavior
+- a multi-floor map editor and dungeon validator
 
 Included files
 --------------
 dungeona.py
-    Main game.
+    Main terminal game.
+
+dungeona_gui.py
+    Tkinter GUI frontend for the same dungeon and game logic.
 
 dungeon_editor.py
     Terminal map editor and dungeon validator.
 
 ans.py
-    Reusable ANSI/ANS parser and optional texture viewer.
+    ANSI/ANS parser and optional texture viewer utility.
 
 dungeon_map.db
     SQLite dungeon data file used by the game and editor.
@@ -54,7 +60,8 @@ readme.txt
 Features
 --------
 - terminal-based first-person dungeon exploration
-- pseudo-3D corridor rendering in curses
+- optional Tkinter GUI frontend
+- pseudo-3D corridor rendering
 - ANSI/ANS wall and door textures
 - animated rat artwork when rat texture frames are available
 - three connected dungeon floors in the default adventure
@@ -71,22 +78,25 @@ Features
 Requirements
 ------------
 - Python 3.10 or newer recommended
-- a terminal with curses support
+- a terminal with curses support for the terminal game/editor
+- Tkinter support for the GUI frontend
 - no third-party packages required on Linux or macOS
 
 Windows users may need:
 
     pip install windows-curses
 
-How to run the game
--------------------
-From the project folder:
+How to run
+----------
+Run the terminal game:
 
     python dungeona.py
 
-How to run the editor
----------------------
-From the project folder:
+Run the GUI frontend:
+
+    python dungeona_gui.py
+
+Run the dungeon editor:
 
     python dungeon_editor.py
 
@@ -138,26 +148,31 @@ Actions:
 - <                 Use stairs up
 - X                 Quit the game
 
+GUI notes
+---------
+- The GUI frontend uses the same dungeon data and core game logic as the
+  terminal version.
+- It opens in a window using Tkinter rather than curses.
+- If Tkinter is missing from your Python install, the GUI may not launch.
+
 Gameplay rules
 --------------
 - Energy starts at 12 and is capped at 12.
 - Waiting restores 1 energy.
 - Monsters are defeated by interacting with them when directly ahead.
-- Combat costs:
-  - 2 energy before you have the grail
-  - 1 energy while carrying the grail
-- Doors open when you interact with a door tile in front of you.
+- Combat costs 2 energy before you have the grail, and 1 energy while carrying it.
+- Doors open when you interact with a door tile directly in front of you.
 - Standing on stairs can move you between linked floors.
-- The grail can be picked up either by stepping onto it or interacting with it.
+- The grail can be picked up by stepping onto it or interacting with it.
 - The grail is delivered by using the altar or standing on it on floor 3.
 - Monsters can spot the player and continue pursuing for several turns.
-- The HUD shows floor, position, facing, item count, grail status, and defeated
-  monsters.
+- The HUD/status display shows floor, position, facing, item count, grail
+  status, and defeated monsters.
 
 Inventory note
 --------------
 The current build exposes an inventory capacity of 3 item slots in the status
-line and quest logic. The Holy Grail uses one of those slots.
+logic. The Holy Grail uses one of those slots.
 
 Monster reference
 -----------------
@@ -202,7 +217,7 @@ Notes:
 
 Dungeon editor
 --------------
-The editor lets you inoct, build, validate, and save multi-floor maps.
+The editor lets you build, inspect, validate, and save multi-floor maps.
 It includes a tile palette, floor switching, and whole-dungeon verification.
 
 Editor controls
@@ -249,7 +264,7 @@ Project notes
 - The default adventure contains three linked floors.
 - The game works best in a reasonably large terminal window.
 - ans.py can be reused outside the game to load or inspect ANSI art.
-- Missing texture files do not stop the game; it falls back to text rendering.
+- Missing texture files do not stop the game; the game falls back to text rendering.
 
 License
 -------
@@ -263,4 +278,3 @@ Copyright (c) 2026 mtatton
 Donation
 --------
 PayPal: https://paypal.me/michtatton
-
