@@ -3,13 +3,14 @@ DUNGEONA
 
 Version
 -------
-Updated README for project archive: 20260329_dungeona-main_doc.zip
+Updated README for project archive: 20260329_dungeona_017.zip
 
 Overview
 --------
 Dungeona is a retro-style first-person dungeon crawler written in Python.
 This build includes:
-- a terminal game built with curses
+
+- a terminal version built with curses
 - two Tkinter windowed front ends
 - a terminal dungeon editor with validation tools
 - SQLite-backed multi-floor dungeon storage
@@ -18,13 +19,19 @@ This build includes:
 In the default adventure, your goal is to find the Holy Grail and deliver it
 to the altar on the final floor.
 
-What's new in this documented build
------------------------------------
-Compared with the previous README build, this archive now clearly includes:
-- dungeona_ren.py, an additional Tkinter renderer/windowed frontend
-- floor.ans and ceiling.ans texture assets alongside wall and door textures
-- animated rat sprite frames in textures/rat001.ans through rat003.ans
-- the same multi-floor editor, quest flow, and monster chase behavior
+Highlights of this build
+------------------------
+This archive includes:
+
+- dungeona.py, the main terminal game
+- dungeona_gui.py, a Tkinter GUI frontend with textured scene rendering
+- dungeona_ren.py, an alternate Tkinter renderer/windowed frontend
+- dungeon_editor.py, a curses map editor and validator
+- ans.py, a reusable ANSI/ANS parser and texture viewer
+- wall, door, floor, and ceiling ANSI textures
+- animated rat frames in textures/rat001.ans through rat003.ans
+- multi-floor dungeon data stored in SQLite
+- monster chase behavior, minimap support, and energy-based combat
 
 Included files
 --------------
@@ -219,50 +226,58 @@ Primary multi-floor table:
 Columns:
 - floor_index   Zero-based floor number
 - row_index     Zero-based row number within the floor
-- row_text      Raw text for that row
+- row_text      Map row contents as text
 
-Notes:
-- If the multi-floor table is empty, the game/editor can repopulate it with
-  built-in default floors.
-- Legacy single-floor data in a map_rows table is also supported.
+If the database is empty, the code can repopulate it with built-in default
+floors.
 
-Dungeon editor
---------------
-The editor lets you build, inspect, validate, and save multi-floor maps.
-It includes a tile palette, floor switching, and whole-dungeon verification.
+Editor features
+---------------
+The editor lets you:
+- move a cursor around the map
+- switch between dungeon floors
+- place walls, floors, doors, monsters, stairs, and quest items
+- verify the entire dungeon for map errors
+- save the dungeon back to dungeon_map.db
 
 Editor controls
 ---------------
-- Arrow Keys        Move cursor
-- ,                 Previous floor
-- .                 Next floor
-- 1                 Wall
-- 2                 Floor
-- 3                 Door
-- 4                 Holy Grail
-- 5                 Altar
-- 6                 Rat
-- 7                 Skeleton
-- 8                 Ogre
-- 9                 Stairs down
-- 0                 Stairs up
-- -                 Generic monster marker
-- =                 Empty tile
-- Space / Enter     Place current tile
-- [ or ]            Cycle selected tile
-- V                 Verify the whole dungeon
-- S                 Save to dungeon_map.db
-- Q                 Quit editor
+Navigation:
+- Arrow Keys      Move the cursor
+- , or <          Previous floor
+- . or >          Next floor
 
-Editor validation checks
-------------------------
-The validator checks for problems such as:
+Tile placement:
+- 1               Wall
+- 2               Floor
+- 3               Door
+- 4               Holy Grail
+- 5               Altar
+- 6               Rat
+- 7               Skeleton
+- 8               Ogre
+- 9               Stairs down
+- 0               Stairs up
+- -               Generic monster marker
+- =               Empty space
+- [ or ]          Cycle selected tile
+- Space / Enter   Place selected tile
+- P               Place selected tile
+
+Project actions:
+- V               Verify the whole dungeon
+- S               Save to dungeon_map.db
+- Q               Quit editor
+
+Validation checks
+-----------------
+The editor validator checks for common dungeon issues, including:
 - empty maps
 - inconsistent row widths
 - unknown tile values
 - unreachable walkable areas
-- unreachable quest tiles, monsters, or stairs
-- leaks on the outer border
+- unreachable quest items, monsters, or stairs
+- map leaks on the outer border
 - missing or extra stair links
 - missing or extra Holy Grails
 - missing or extra altars
@@ -270,17 +285,16 @@ The validator checks for problems such as:
 
 Project notes
 -------------
-- Empty space is shown with a visible marker in the editor, but stored as a
-  literal space character in the map data.
-- The default adventure contains three linked floors.
-- The game works best in a reasonably large terminal window.
-- ans.py can be reused outside the game to load or inspect ANSI art.
-- Missing texture files do not stop the game; the game falls back to text rendering.
+- Empty space is stored as a literal space character in the map data.
+- The project is designed for terminal play and works best in a reasonably
+  large console window.
+- ANSI textures are optional visual enhancements used by the renderer.
+- The texture loader in ans.py can also be reused in other Python tools.
 
 License
 -------
 This project is distributed under the dungeona Donationware License v1.0.
-See license.txt for the full text.
+See license.txt for the full license text.
 
 Author
 ------
@@ -288,5 +302,5 @@ Copyright (c) 2026 mtatton
 
 Donation
 --------
-PayPal: https://paypal.me/michtatton
-
+PayPal:
+https://paypal.me/michtatton
