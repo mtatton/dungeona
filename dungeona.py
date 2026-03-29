@@ -19,6 +19,12 @@ WALL_TEXTURE_FILES = {
 FLOOR_TEXTURE_FILE = "floor.ans"
 CEILING_TEXTURE_FILE = "ceiling.ans"
 RAT_ANIMATION_FILES = ["rat001.ans", "rat002.ans", "rat003.ans"]
+SPRITE_TEXTURE_FILES = {
+    "altar": "altar.ans",
+    "grail": "grail.ans",
+    "ogre": "ogre.ans",
+    "skeleton": "skeleton.ans",
+}
 
 DIRECTIONS: List[Vec2] = [
     (0, -1),
@@ -49,7 +55,7 @@ QUEST_ITEM_TILE = "G"
 QUEST_TARGET_TILE = "A"
 QUEST_ITEM_NAME = "Holy Grail"
 QUEST_START_FLOOR = 0
-QUEST_TARGET_FLOOR = 2
+QUEST_TARGET_FLOOR = 0
 MAX_CARRIED_ITEMS = 3
 CONGRATS_BANNER = [
     "  ____                            _         _       _   _                 ",
@@ -289,6 +295,19 @@ def load_animated_sprites() -> Dict[str, List[List[str]]]:
     return animations
 
 
+def load_static_sprites() -> Dict[str, List[str]]:
+    sprites: Dict[str, List[str]] = {}
+    for key, filename in SPRITE_TEXTURE_FILES.items():
+        path = TEXTURE_DIR / filename
+        if not path.exists():
+            continue
+        try:
+            sprites[key] = texture_to_sprite_lines(load_ans_texture(path))
+        except Exception:
+            continue
+    return sprites
+
+
 def texture_char_for_column(texture: Optional[AnsiTexture], x_ratio: float, y_ratio: float, fallback: str) -> str:
     if texture is None or texture.width <= 0 or texture.height <= 0:
         return fallback
@@ -503,6 +522,7 @@ def render_monster_sprite(
     side: int,
     monster_tile: str,
     animated_sprites: Optional[Dict[str, List[List[str]]]] = None,
+    static_sprites: Optional[Dict[str, List[str]]] = None,
     animation_step: int = 0,
 ) -> None:
     info = monster_info(monster_tile)
@@ -516,72 +536,105 @@ def render_monster_sprite(
         frames = animated_sprites[animation_key]
         if frames:
             sprite = frames[animation_step % len(frames)]
+    elif static_sprites:
+        static_key = str(info["name"])
+        if static_key in static_sprites:
+            sprite = static_sprites[static_key]
     color = int(info["color"])
     sprite_height = max(2, int(round(len(sprite) * perspective_scale)))
-    sprite_width = max(3, int(round(len(sprite[0]) * perspective_scale * (0.95 if side == 0 else 0.85))))
-    sprite_top = max(1, floor_y - sprite_height + 1)
+    max_row_width = max((len(row) for row in sprite), default=1)
+    sprite_width = max(3, int(round(max_row_width * perspective_scale * (0.95 if side == 0 else 0.85))))
+    sprite_bottom = floor_y
+    sprite_top = max(1, sprite_bottom - sprite_height + 1)
 
     for target_row in range(sprite_height):
         source_row = min(len(sprite) - 1, int(target_row / max(0.001, perspective_scale)))
         row = sprite[source_row]
+        if not row:
+            continue
         sy = sprite_top + target_row
         start_x = center_x - sprite_width // 2
+        col_scale = max(0.001, sprite_width / len(row))
         for target_col in range(sprite_width):
-            source_col = min(len(row) - 1, int(target_col / max(0.001, sprite_width / len(row))))
+            source_col = min(len(row) - 1, int(target_col / col_scale))
             ch = row[source_col]
             if ch != " ":
                 items.append((sy, start_x + target_col, ch, color))
 
 
-def render_grail_sprite(items: List[DrawItem], width: int, height: int, distance: int, side: int) -> None:
+def render_grail_sprite(
+    items: List[DrawItem],
+    width: int,
+    height: int,
+    distance: int,
+    side: int,
+    static_sprites: Optional[Dict[str, List[str]]] = None,
+) -> None:
     perspective_scale = max(0.45, 2.0 / (distance + 0.2))
     perspective_scale *= 1.18 if side == 0 else 0.72
     center_x = width // 2 + side * max(2, width // max(10, 11 + distance * 2))
     floor_y = height - 4
-    sprite = [
+    sprite = (static_sprites or {}).get("grail", [
         " .^. ",
         "(===)",
         " \\_/ ",
         "  |  ",
         " _|_ ",
-    ]
+    ])
     sprite_height = max(2, int(round(len(sprite) * perspective_scale)))
-    sprite_width = max(2, int(round(len(sprite[0]) * perspective_scale * (0.92 if side == 0 else 0.82))))
-    sprite_top = max(1, floor_y - sprite_height + 1)
+    max_row_width = max((len(row) for row in sprite), default=1)
+    sprite_width = max(2, int(round(max_row_width * perspective_scale * (0.92 if side == 0 else 0.82))))
+    sprite_bottom = floor_y
+    sprite_top = max(1, sprite_bottom - sprite_height + 1)
 
     for target_row in range(sprite_height):
         source_row = min(len(sprite) - 1, int(target_row / max(0.001, perspective_scale)))
         row = sprite[source_row]
+        if not row:
+            continue
         sy = sprite_top + target_row
         start_x = center_x - sprite_width // 2
+        col_scale = max(0.001, sprite_width / len(row))
         for target_col in range(sprite_width):
-            source_col = min(len(row) - 1, int(target_col / max(0.001, sprite_width / len(row))))
+            source_col = min(len(row) - 1, int(target_col / col_scale))
             ch = row[source_col]
             if ch != " ":
                 items.append((sy, start_x + target_col, ch, 8))
 
 
-def render_altar_sprite(items: List[DrawItem], width: int, height: int, distance: int, side: int) -> None:
+def render_altar_sprite(
+    items: List[DrawItem],
+    width: int,
+    height: int,
+    distance: int,
+    side: int,
+    static_sprites: Optional[Dict[str, List[str]]] = None,
+) -> None:
     perspective_scale = max(0.48, 2.1 / (distance + 0.25))
     center_x = width // 2 + side * max(2, width // max(10, 11 + distance * 2))
     floor_y = height - 4
-    sprite = [
+    sprite = (static_sprites or {}).get("altar", [
         " _____ ",
         "/_A_A_\\",
         "|_____|",
         "  |_|  ",
-    ]
+    ])
     sprite_height = max(2, int(round(len(sprite) * perspective_scale)))
-    sprite_width = max(3, int(round(len(sprite[0]) * perspective_scale)))
-    sprite_top = max(1, floor_y - sprite_height + 1)
+    max_row_width = max((len(row) for row in sprite), default=1)
+    sprite_width = max(3, int(round(max_row_width * perspective_scale)))
+    sprite_bottom = floor_y
+    sprite_top = max(1, sprite_bottom - sprite_height + 1)
 
     for target_row in range(sprite_height):
         source_row = min(len(sprite) - 1, int(target_row / max(0.001, perspective_scale)))
         row = sprite[source_row]
+        if not row:
+            continue
         sy = sprite_top + target_row
         start_x = center_x - sprite_width // 2
+        col_scale = max(0.001, sprite_width / len(row))
         for target_col in range(sprite_width):
-            source_col = min(len(row) - 1, int(target_col / max(0.001, sprite_width / len(row))))
+            source_col = min(len(row) - 1, int(target_col / col_scale))
             ch = row[source_col]
             if ch != " ":
                 items.append((sy, start_x + target_col, ch, 10))
@@ -603,16 +656,21 @@ def render_stairs_sprite(items: List[DrawItem], width: int, height: int, distanc
         "_____",
     ]
     sprite_height = max(2, int(round(len(sprite) * perspective_scale)))
-    sprite_width = max(3, int(round(len(sprite[0]) * perspective_scale)))
-    sprite_top = max(1, floor_y - sprite_height + 1)
+    max_row_width = max((len(row) for row in sprite), default=1)
+    sprite_width = max(3, int(round(max_row_width * perspective_scale)))
+    sprite_bottom = floor_y
+    sprite_top = max(1, sprite_bottom - sprite_height + 1)
 
     for target_row in range(sprite_height):
         source_row = min(len(sprite) - 1, int(target_row / max(0.001, perspective_scale)))
         row = sprite[source_row]
+        if not row:
+            continue
         sy = sprite_top + target_row
         start_x = center_x - sprite_width // 2
+        col_scale = max(0.001, sprite_width / len(row))
         for target_col in range(sprite_width):
-            source_col = min(len(row) - 1, int(target_col / max(0.001, sprite_width / len(row))))
+            source_col = min(len(row) - 1, int(target_col / col_scale))
             ch = row[source_col]
             if ch != " ":
                 items.append((sy, start_x + target_col, ch, 9))
@@ -629,6 +687,7 @@ def render_view(
     floor_texture: Optional[AnsiTexture] = None,
     ceiling_texture: Optional[AnsiTexture] = None,
     animated_sprites: Optional[Dict[str, List[List[str]]]] = None,
+    static_sprites: Optional[Dict[str, List[str]]] = None,
     animation_step: int = 0,
 ) -> List[DrawItem]:
     items: List[DrawItem] = []
@@ -705,17 +764,17 @@ def render_view(
     visible_grail = grail_in_view(grid, px, py, facing)
     if visible_grail is not None:
         distance, side, _ = visible_grail
-        render_grail_sprite(items, width, height, distance, side)
+        render_grail_sprite(items, width, height, distance, side, static_sprites)
 
     visible_altar = altar_in_view(grid, px, py, facing)
     if visible_altar is not None:
         distance, side, _ = visible_altar
-        render_altar_sprite(items, width, height, distance, side)
+        render_altar_sprite(items, width, height, distance, side, static_sprites)
 
     seen_monster = visible_monster(grid, px, py, facing)
     if seen_monster is not None:
         distance, side, _, tile = seen_monster
-        render_monster_sprite(items, width, height, distance, side, tile, animated_sprites, animation_step)
+        render_monster_sprite(items, width, height, distance, side, tile, animated_sprites, static_sprites, animation_step)
 
     return items
 
@@ -1087,6 +1146,7 @@ def draw_scene(stdscr, state: Dict[str, object]) -> None:
         state.get("floor_texture"),
         state.get("ceiling_texture"),
         state.get("animated_sprites"),
+        state.get("static_sprites"),
         int(state.get("action_count", 0)),
     ):
         if 1 <= y < height - 3 and 0 <= x < width:
@@ -1139,6 +1199,7 @@ def run(stdscr) -> int:
     floor_texture = load_surface_texture(FLOOR_TEXTURE_FILE)
     ceiling_texture = load_surface_texture(CEILING_TEXTURE_FILE)
     animated_sprites = load_animated_sprites()
+    static_sprites = load_static_sprites()
     state: Dict[str, object] = {
         "floors": floors,
         "floor": start_floor,
@@ -1156,6 +1217,7 @@ def run(stdscr) -> int:
         "floor_texture": floor_texture,
         "ceiling_texture": ceiling_texture,
         "animated_sprites": animated_sprites,
+        "static_sprites": static_sprites,
         "action_count": 0,
         "monster_chase": {},
     }
