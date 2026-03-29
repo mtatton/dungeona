@@ -70,6 +70,7 @@ class DungeonaGUI:
             "floor_texture": dungeona.load_surface_texture(dungeona.FLOOR_TEXTURE_FILE),
             "ceiling_texture": dungeona.load_surface_texture(dungeona.CEILING_TEXTURE_FILE),
             "animated_sprites": dungeona.load_animated_sprites(),
+            "static_sprites": dungeona.load_static_sprites(),
             "action_count": 0,
             "monster_chase": {},
         }
@@ -598,6 +599,7 @@ class DungeonaGUI:
             self.state.get("floor_texture"),
             self.state.get("ceiling_texture"),
             self.state.get("animated_sprites"),
+            self.state.get("static_sprites"),
             int(self.state.get("action_count", 0)),
         )
         rects: List[Tuple[int, int, str]] = []

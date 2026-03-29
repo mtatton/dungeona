@@ -55,7 +55,7 @@ QUEST_ITEM_TILE = "G"
 QUEST_TARGET_TILE = "A"
 QUEST_ITEM_NAME = "Holy Grail"
 QUEST_START_FLOOR = 0
-QUEST_TARGET_FLOOR = 2
+QUEST_TARGET_FLOOR = 0
 MAX_CARRIED_ITEMS = 3
 CONGRATS_BANNER = [
     "  ____                            _         _       _   _                 ",
