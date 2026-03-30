@@ -15,9 +15,9 @@ entities and environments.
 
 [<img src="img/20260330_dungeona.png">](img/20260330_dungeona.png)
 [<img src="img/20260330_dungeona_editor.png">](img/20260330_dungeona_editor.png)
-[<img src="img/20260329_dungeona_test.png">](img/20260330_dungeona_test.png)
 [<img src="img/20260330_dungeona_gui.png">](img/20260330_dungeona_gui.png)
 [<img src="img/20260329_dungeona_textures.png">](img/20260329_dungeona_textures.png)
+[<img src="img/20260330_dungeona_tests.png">](img/20260330_dungeona_tests.png)
 
 What's New in This Build
 -----------------------
