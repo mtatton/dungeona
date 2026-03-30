@@ -120,7 +120,6 @@ def initialize_map_db(db_path: Path) -> None:
 
 
 def load_floors(db_path: Path = DB_PATH) -> List[List[List[str]]]:
-    initialize_map_db(db_path)
     with sqlite3.connect(db_path) as conn:
         has_floor_table = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='floor_map_rows'"
@@ -147,6 +146,16 @@ def load_floors(db_path: Path = DB_PATH) -> List[List[List[str]]]:
                     floors.append(normalize_floor_rows(DEFAULT_FLOORS[len(floors)]))
                 return floors
 
+    initialize_map_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT floor_index, row_index, row_text FROM floor_map_rows ORDER BY floor_index, row_index"
+        ).fetchall()
+    grouped: Dict[int, List[str]] = {}
+    for floor_index, _row_index, row_text in rows:
+        grouped.setdefault(int(floor_index), []).append(row_text)
+    if grouped:
+        return [normalize_floor_rows(grouped[index]) for index in sorted(grouped)]
     return [normalize_floor_rows(rows) for rows in DEFAULT_FLOORS]
 
 

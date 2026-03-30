@@ -8,7 +8,7 @@ import dungeon_editor
 from conftest import FakeStdScr, make_grid
 
 
-def test_editor_load_floors_legacy_and_default_fallbacks(tmp_path: Path, monkeypatch):
+def test_editor_load_floors_legacy_and_default_fallbacks(tmp_path: Path):
     legacy_db = tmp_path / "legacy.db"
     with sqlite3.connect(legacy_db) as conn:
         conn.execute("CREATE TABLE map_rows (row_index INTEGER PRIMARY KEY, row_text TEXT)")
@@ -18,7 +18,6 @@ def test_editor_load_floors_legacy_and_default_fallbacks(tmp_path: Path, monkeyp
         )
         conn.commit()
 
-    monkeypatch.setattr(dungeon_editor, "initialize_map_db", lambda _db_path: None)
     legacy_floors = dungeon_editor.load_floors(legacy_db)
     assert "".join(legacy_floors[0][1]) == "#..>#"
     assert len(legacy_floors) == 3

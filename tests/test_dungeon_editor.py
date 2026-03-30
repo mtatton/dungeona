@@ -25,7 +25,6 @@ def test_editor_normalize_load_and_save_round_trip(tmp_path: Path):
     assert reloaded[0][1][1] == "G"
 
 
-@pytest.mark.xfail(reason="initialize_map_db seeds floor_map_rows before legacy fallback can run")
 def test_editor_load_floors_uses_legacy_map_rows_when_present(tmp_path: Path):
     db_path = tmp_path / "legacy.db"
     with sqlite3.connect(db_path) as conn:
@@ -40,6 +39,7 @@ def test_editor_load_floors_uses_legacy_map_rows_when_present(tmp_path: Path):
 
     assert len(floors) == 3
     assert "".join(floors[0][1]) == "#..>#"
+    assert floors[1] == dungeon_editor.normalize_floor_rows(dungeon_editor.DEFAULT_FLOORS[1])
 
 
 def test_find_start_and_flood_walkable():
