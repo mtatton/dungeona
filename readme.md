@@ -111,6 +111,14 @@ Editor Highlights
 - Full dungeon validation
 - Save/load via SQLite
 
+Terminal Settings Note 
+----------------------
+[.] export TERM=screen-256color # this
+[.] python3 dungeona.py --color-mode 256
+[.] python3 dungeona.py --color-mode 16
+
+https://asciinema.org/a/zGX38RkA7C9AzoRF
+
 License
 -------
 Donationware License (see license.txt)
