@@ -6,3 +6,4 @@ debian/.debhelper/
 debian/dungeona.install
 debian/dungeona.postinst.debhelper
 debian/dungeona.prerm.debhelper
+debian/dungeona.debhelper.log
