@@ -21,6 +21,7 @@ X / Esc      quit
 from __future__ import annotations
 
 import argparse
+import math
 from typing import Dict, List, Optional, Tuple
 
 import dungeona
@@ -88,7 +89,7 @@ DARK_ANSI_RGB: Dict[str, RGB] = {
     "Wh": (85, 85, 85),
 }
 
-KEY_HELP = "WASD/arrows move  Q/E turn  Z/C strafe  Space act  . wait  M map  </> stairs  X quit"
+KEY_HELP = "Mouse look  WASD/arrows move  Q/E turn  Space act  . wait  M map  </> stairs  Tab mouse  X quit"
 
 
 class Dungeona2:
@@ -120,6 +121,13 @@ class Dungeona2:
         self.trimmed_texture_cache: Dict[Tuple[object, ...], Tuple[Tuple[AnsiCell, ...], ...]] = {}
         self.glyph_cache: Dict[Tuple[str, RGB, int, int], "pygame.Surface"] = {}
         self.sprite_font_cache: Dict[int, "pygame.font.Font"] = {}
+        self.mouse_sensitivity = 0.0084
+        self.mouse_captured = True
+        self._ignore_mousemotion_events = 0
+        self.view_angle = 0.0
+        self.view_pitch = 0.0
+        self.max_view_pitch = 0.90
+        self.max_head_yaw = math.radians(72.0)
         self.ansi_sprite_assets = self.load_ansi_sprite_assets()
         self.resize(self.window_width, self.window_height)
 
@@ -148,6 +156,8 @@ class Dungeona2:
             "action_count": 0,
             "monster_chase": {},
         }
+        self.view_angle = self.facing_to_angle(int(self.state["facing"]))
+        self.set_mouse_capture(True)
         dungeona.collect_tile(self.state, dungeona.current_grid(self.state))
 
     # ---------- color and texture helpers ----------
@@ -253,23 +263,13 @@ class Dungeona2:
         self.texture_fill_cache[texture_id] = rows
         return rows
 
-    def ansi_texture_from_lines(
-        self,
-        lines: List[str],
-        *,
-        fg: str = "Wh",
-        bg: str = "Bk",
-        intensity: str = "hi",
-    ) -> AnsiTexture:
+    def make_text_texture(self, lines: List[str], *, fg: str = "Wh", bg: str = "Bk", intensity: str = "hi") -> AnsiTexture:
         width = max((len(line) for line in lines), default=1)
-        rows = [
-            [
-                AnsiCell(char=(line[x] if x < len(line) else " "), fg=fg, bg=bg, intensity=intensity)
-                for x in range(width)
-            ]
-            for line in lines
-        ]
-        return AnsiTexture(width=width, height=max(1, len(rows)), rows=rows)
+        rows: List[List[AnsiCell]] = []
+        for line in lines:
+            row = [AnsiCell(char=ch, fg=fg, bg=bg, intensity=intensity) for ch in line.ljust(width)]
+            rows.append(row)
+        return AnsiTexture(width=width, height=len(rows), rows=rows)
 
     def load_ansi_sprite_assets(self) -> Dict[str, object]:
         def load_one(filename: str) -> Optional[AnsiTexture]:
@@ -286,18 +286,8 @@ class Dungeona2:
             "skeleton": load_one("skeleton.ans"),
             "grail": load_one("grail.ans"),
             "altar": load_one("altar.ans"),
-            "stairs_down": self.ansi_texture_from_lines([
-                "_____",
-                " ___ ",
-                "  __ ",
-                "   _ ",
-            ], fg="Cy"),
-            "stairs_up": self.ansi_texture_from_lines([
-                " _   ",
-                " __  ",
-                " ___ ",
-                "_____",
-            ], fg="Cy"),
+            "stairs_up": self.make_text_texture([" _   ", " __  ", " ___ ", "_____"], fg="Cy", intensity="hi"),
+            "stairs_down": self.make_text_texture(["_____", " ___ ", "  __ ", "   _ "], fg="Cy", intensity="hi"),
         }
 
     def trimmed_texture_rows(self, texture: Optional[AnsiTexture]) -> Tuple[Tuple[AnsiCell, ...], ...]:
@@ -375,7 +365,7 @@ class Dungeona2:
         texture: Optional[AnsiTexture],
         *,
         distance: int,
-        side: int,
+        side: float,
         base_scale: float,
         distance_bias: float,
         min_scale: float,
@@ -392,11 +382,13 @@ class Dungeona2:
         cell_rows = len(trimmed_rows)
         cell_cols = max(len(row) for row in trimmed_rows)
         perspective_scale = max(min_scale, base_scale / (distance + distance_bias))
-        perspective_scale *= center_scale if side == 0 else side_scale
-        center_x_logic = self.view_width_cells // 2 + side * max(2, self.view_width_cells // max(8, 10 + distance * 2))
-        floor_y_logic = self.view_height_cells - 4
+        side_abs = min(1.0, abs(side))
+        center_mix = 1.0 - side_abs
+        perspective_scale *= side_scale + (center_scale - side_scale) * center_mix
+        center_x_logic = self.view_width_cells // 2 + int(round(side * self.view_width_cells * 0.33))
+        floor_y_logic = self.view_height_cells - 4 + self.view_pitch_cells()
         sprite_height_logic = max(3, int(round(cell_rows * perspective_scale)))
-        width_scale = width_scale_front if side == 0 else width_scale_side
+        width_scale = width_scale_side + (width_scale_front - width_scale_side) * center_mix
         sprite_width_logic = max(3, int(round(cell_cols * perspective_scale * width_scale)))
         sprite_left_logic = center_x_logic - sprite_width_logic / 2.0
         sprite_top_logic = floor_y_logic - sprite_height_logic + 1
@@ -416,8 +408,7 @@ class Dungeona2:
 
         depth_px = max(1, min(14, int(round(min(cell_w, cell_h) * 0.34))))
         face_brightness = max(0.42, min(1.05, 1.02 - distance * 0.10))
-        if side != 0:
-            face_brightness *= 0.94
+        face_brightness *= 1.0 - 0.06 * side_abs
 
         sprite_surface = pygame.Surface((actual_w + depth_px + 2, actual_h + depth_px + 2), pygame.SRCALPHA)
         for row_index, row in enumerate(trimmed_rows):
@@ -471,6 +462,132 @@ class Dungeona2:
             ty = min(texture.height - 1, max(0, int(y_ratio * max(1, texture.height - 1))))
         return fill_rows[ty][tx]
 
+    def normalize_angle(self, angle: float) -> float:
+        while angle <= -math.pi:
+            angle += math.tau
+        while angle > math.pi:
+            angle -= math.tau
+        return angle
+
+    def facing_to_angle(self, facing: int) -> float:
+        dx, dy = dungeona.DIRECTIONS[facing % len(dungeona.DIRECTIONS)]
+        return math.atan2(float(dy), float(dx))
+
+    def angle_to_facing(self, angle: float) -> int:
+        aim_x = math.cos(angle)
+        aim_y = math.sin(angle)
+        best_index = 0
+        best_dot = -10.0
+        for index, (dx, dy) in enumerate(dungeona.DIRECTIONS):
+            dot = aim_x * dx + aim_y * dy
+            if dot > best_dot:
+                best_dot = dot
+                best_index = index
+        return best_index
+
+    def sync_facing_to_view_angle(self) -> None:
+        self.state["facing"] = self.angle_to_facing(self.view_angle)
+
+    def set_mouse_capture(self, capture: bool) -> None:
+        self.mouse_captured = bool(capture)
+        try:
+            pygame.event.set_grab(self.mouse_captured)
+            pygame.mouse.set_visible(not self.mouse_captured)
+            pygame.mouse.get_rel()
+            if self.mouse_captured:
+                self.center_mouse()
+        except Exception:
+            pass
+
+    def camera_basis(self) -> Tuple[float, float, float, float]:
+        dir_x = math.cos(self.view_angle)
+        dir_y = math.sin(self.view_angle)
+        plane_x = -dir_y * dungeona.FOV_SCALE
+        plane_y = dir_x * dungeona.FOV_SCALE
+        return dir_x, dir_y, plane_x, plane_y
+
+    def view_pitch_cells(self) -> int:
+        return int(round(self.view_pitch * (self.view_height_cells * 0.22)))
+
+    def horizon_row(self) -> int:
+        base_horizon = self.view_height_cells // 2
+        return max(8, min(self.view_height_cells - 8, base_horizon + self.view_pitch_cells()))
+
+    def billboard_projection(self, tile_x: int, tile_y: int, *, max_distance: float = 6.5) -> Optional[Tuple[float, float]]:
+        cam_x = float(self.state["x"]) + 0.5
+        cam_y = float(self.state["y"]) + 0.5
+        rel_x = tile_x + 0.5 - cam_x
+        rel_y = tile_y + 0.5 - cam_y
+        euclidean = math.hypot(rel_x, rel_y)
+        if euclidean <= 0.05 or euclidean > max_distance:
+            return None
+
+        dir_x, dir_y, plane_x, plane_y = self.camera_basis()
+        inv_det = 1.0 / (plane_x * dir_y - dir_x * plane_y)
+        transform_x = inv_det * (dir_y * rel_x - dir_x * rel_y)
+        transform_y = inv_det * (-plane_y * rel_x + plane_x * rel_y)
+        if transform_y <= 0.12:
+            return None
+        screen_offset = transform_x / transform_y
+        if abs(screen_offset) > 1.35:
+            return None
+
+        grid = dungeona.current_grid(self.state)
+        wall_distance, wall_cell, _side, _hit = dungeona.cast_perspective_ray(
+            grid,
+            cam_x,
+            cam_y,
+            rel_x / euclidean,
+            rel_y / euclidean,
+            max_depth=euclidean + 0.25,
+        )
+        if wall_cell in {"#", "D"} and wall_distance + 0.30 < euclidean:
+            return None
+        return transform_y, screen_offset
+
+    def gather_visible_billboards(self) -> List[Tuple[float, float, str, Optional[AnsiTexture]]]:
+        grid = dungeona.current_grid(self.state)
+        px = int(self.state["x"])
+        py = int(self.state["y"])
+        action_count = int(self.state.get("action_count", 0))
+        billboards: List[Tuple[float, float, str, Optional[AnsiTexture]]] = []
+
+        for tile_y in range(max(0, py - 6), min(len(grid), py + 7)):
+            row = grid[tile_y]
+            for tile_x in range(max(0, px - 6), min(len(row), px + 7)):
+                cell = row[tile_x]
+                kind: Optional[str] = None
+                texture: Optional[AnsiTexture] = None
+                if dungeona.is_monster(cell):
+                    kind = f"monster:{cell}"
+                    texture = self.monster_texture(cell if cell in dungeona.MONSTER_TILES else "R", action_count)
+                elif cell == dungeona.QUEST_ITEM_TILE:
+                    kind = "grail"
+                    candidate = self.ansi_sprite_assets.get("grail")
+                    texture = candidate if isinstance(candidate, AnsiTexture) else None
+                elif cell == dungeona.QUEST_TARGET_TILE:
+                    kind = "altar"
+                    candidate = self.ansi_sprite_assets.get("altar")
+                    texture = candidate if isinstance(candidate, AnsiTexture) else None
+                elif cell == ">":
+                    kind = "stairs_down"
+                    candidate = self.ansi_sprite_assets.get("stairs_down")
+                    texture = candidate if isinstance(candidate, AnsiTexture) else None
+                elif cell == "<":
+                    kind = "stairs_up"
+                    candidate = self.ansi_sprite_assets.get("stairs_up")
+                    texture = candidate if isinstance(candidate, AnsiTexture) else None
+
+                if kind is None or texture is None:
+                    continue
+                projection = self.billboard_projection(tile_x, tile_y)
+                if projection is None:
+                    continue
+                distance, screen_offset = projection
+                billboards.append((distance, screen_offset, kind, texture))
+
+        return sorted(billboards, key=lambda item: item[0], reverse=True)
+
     def char_fill(self, ch: str, color_id: int) -> Optional[RGB]:
         if ch == " ":
             return None
@@ -491,15 +608,13 @@ class Dungeona2:
         grid = dungeona.current_grid(self.state)
         px = int(self.state["x"])
         py = int(self.state["y"])
-        facing = int(self.state["facing"])
         wall_textures = self.state.get("wall_textures") or {}
         floor_texture = self.state.get("floor_texture")
         ceiling_texture = self.state.get("ceiling_texture")
-        horizon = self.view_height_cells // 2
+        horizon = self.horizon_row()
         cam_x = px + 0.5
         cam_y = py + 0.5
-        dir_x, dir_y = dungeona.facing_vector(facing)
-        plane_x, plane_y = -dir_y * dungeona.FOV_SCALE, dir_x * dungeona.FOV_SCALE
+        dir_x, dir_y, plane_x, plane_y = self.camera_basis()
 
         surface = self.view_surface
         surface.lock()
@@ -595,45 +710,13 @@ class Dungeona2:
         self.screen.blit(scaled, (vx, vy))
 
     def draw_ansi_billboards(self) -> None:
-        grid = dungeona.current_grid(self.state)
-        px = int(self.state["x"])
-        py = int(self.state["y"])
-        facing = int(self.state["facing"])
-        action_count = int(self.state.get("action_count", 0))
-
-        billboards: List[Tuple[int, int, str, Optional[AnsiTexture]]] = []
-
-        visible_grail = dungeona.grail_in_view(grid, px, py, facing)
-        if visible_grail is not None:
-            distance, side, _ = visible_grail
-            texture = self.ansi_sprite_assets.get("grail")
-            billboards.append((distance, side, "grail", texture if isinstance(texture, AnsiTexture) else None))
-
-        visible_altar = dungeona.altar_in_view(grid, px, py, facing)
-        if visible_altar is not None:
-            distance, side, _ = visible_altar
-            texture = self.ansi_sprite_assets.get("altar")
-            billboards.append((distance, side, "altar", texture if isinstance(texture, AnsiTexture) else None))
-
-        visible_stairs = dungeona.stairs_in_view(grid, px, py, facing)
-        if visible_stairs is not None:
-            distance, side, _, tile = visible_stairs
-            texture_key = "stairs_down" if tile == ">" else "stairs_up"
-            texture = self.ansi_sprite_assets.get(texture_key)
-            billboards.append((distance, side, f"stairs:{tile}", texture if isinstance(texture, AnsiTexture) else None))
-
-        seen_monster = dungeona.visible_monster(grid, px, py, facing)
-        if seen_monster is not None:
-            distance, side, _, tile = seen_monster
-            billboards.append((distance, side, f"monster:{tile}", self.monster_texture(tile, action_count)))
-
-        for distance, side, kind, texture in sorted(billboards, key=lambda item: item[0], reverse=True):
+        for distance, screen_offset, kind, texture in self.gather_visible_billboards():
             if kind == "grail":
                 object_projection_scale = 3.0
                 self.draw_ansi_texture_billboard(
                     texture,
-                    distance=distance,
-                    side=side,
+                    distance=int(max(1, round(distance))),
+                    side=screen_offset,
                     base_scale=2.0 * object_projection_scale,
                     distance_bias=0.2,
                     min_scale=0.45 * object_projection_scale,
@@ -647,8 +730,8 @@ class Dungeona2:
                 object_projection_scale = 3.0
                 self.draw_ansi_texture_billboard(
                     texture,
-                    distance=distance,
-                    side=side,
+                    distance=int(max(1, round(distance))),
+                    side=screen_offset,
                     base_scale=2.1 * object_projection_scale,
                     distance_bias=0.25,
                     min_scale=0.48 * object_projection_scale,
@@ -658,18 +741,18 @@ class Dungeona2:
                     width_scale_side=0.86,
                     opaque_black_background=True,
                 )
-            elif kind.startswith("stairs:"):
+            elif kind in {"stairs_up", "stairs_down"}:
                 stairs_projection_scale = 3.0
                 self.draw_ansi_texture_billboard(
                     texture,
-                    distance=distance,
-                    side=side,
-                    base_scale=2.2 * stairs_projection_scale,
-                    distance_bias=0.25,
-                    min_scale=0.50 * stairs_projection_scale,
+                    distance=int(max(1, round(distance))),
+                    side=screen_offset,
+                    base_scale=2.0 * stairs_projection_scale,
+                    distance_bias=0.22,
+                    min_scale=0.46 * stairs_projection_scale,
                     side_scale=0.76,
-                    center_scale=1.05,
-                    width_scale_front=1.0,
+                    center_scale=1.06,
+                    width_scale_front=0.98,
                     width_scale_side=0.88,
                     opaque_black_background=True,
                 )
@@ -677,8 +760,8 @@ class Dungeona2:
                 monster_projection_scale = 3.0
                 self.draw_ansi_texture_billboard(
                     texture,
-                    distance=distance,
-                    side=side,
+                    distance=int(max(1, round(distance))),
+                    side=screen_offset,
                     base_scale=2.4 * monster_projection_scale,
                     distance_bias=0.35,
                     min_scale=0.55 * monster_projection_scale,
@@ -703,7 +786,7 @@ class Dungeona2:
         grid = dungeona.current_grid(self.state)
         px = int(self.state["x"])
         py = int(self.state["y"])
-        facing = int(self.state["facing"])
+        facing = self.angle_to_facing(self.view_angle)
         radius = 4
         tile = max(12, min(22, self.window_width // 60))
         panel_left = 14
@@ -745,8 +828,9 @@ class Dungeona2:
         center_x = map_left + radius * tile + tile // 2
         center_y = map_top + radius * tile + tile // 2
         pygame.draw.circle(self.screen, PLAYER_COLOR, (center_x, center_y), max(4, tile // 4))
-        dx, dy = dungeona.DIRECTIONS[facing]
-        pygame.draw.line(self.screen, PLAYER_COLOR, (center_x, center_y), (center_x + dx * (tile // 2), center_y + dy * (tile // 2)), 2)
+        aim_x = math.cos(self.view_angle)
+        aim_y = math.sin(self.view_angle)
+        pygame.draw.line(self.screen, PLAYER_COLOR, (center_x, center_y), (center_x + int(round(aim_x * (tile // 2))), center_y + int(round(aim_y * (tile // 2)))), 2)
 
     def draw_text(self, text: str, pos: Tuple[int, int], color: RGB, font, *, align_right: bool = False) -> None:
         surf = font.render(text, True, color)
@@ -823,6 +907,17 @@ class Dungeona2:
             self.state["action_count"] = int(self.state.get("action_count", 0)) + 1
             dungeona.advance_world(self.state)
 
+    def center_mouse(self) -> None:
+        if not self.mouse_captured:
+            return
+        try:
+            rect = self.screen.get_rect()
+            self._ignore_mousemotion_events = max(self._ignore_mousemotion_events, 2)
+            pygame.mouse.set_pos(rect.center)
+            pygame.mouse.get_rel()
+        except Exception:
+            pass
+
     def handle_keydown(self, event: "pygame.event.Event") -> bool:
         key = event.key
         unicode_text = getattr(event, "unicode", "")
@@ -831,33 +926,45 @@ class Dungeona2:
         if self.state.get("show_congrats_banner") and key not in {pygame.K_x, pygame.K_ESCAPE}:
             self.state["show_congrats_banner"] = False
 
+        recenter_after_step = False
+
         if key in {pygame.K_UP, pygame.K_w}:
             old_pos = (self.state["x"], self.state["y"])
             dungeona.try_move(self.state, 1)
-            self.state["message"] = "You move forward." if old_pos != (self.state["x"], self.state["y"]) else "A wall blocks your way."
+            moved = old_pos != (self.state["x"], self.state["y"])
+            self.state["message"] = "You move forward." if moved else "A wall blocks your way."
+            recenter_after_step = moved
             acted = True
         elif key in {pygame.K_DOWN, pygame.K_s}:
             old_pos = (self.state["x"], self.state["y"])
             dungeona.try_move(self.state, -1)
-            self.state["message"] = "You move backward." if old_pos != (self.state["x"], self.state["y"]) else "You cannot move there."
+            moved = old_pos != (self.state["x"], self.state["y"])
+            self.state["message"] = "You move backward." if moved else "You cannot move there."
+            recenter_after_step = moved
+            acted = True
+        elif key in {pygame.K_LEFT, pygame.K_a, pygame.K_z}:
+            old_pos = (self.state["x"], self.state["y"])
+            dungeona.try_strafe(self.state, -1)
+            moved = old_pos != (self.state["x"], self.state["y"])
+            self.state["message"] = "You sidestep left." if moved else "Blocked on the left."
+            recenter_after_step = moved
+            acted = True
+        elif key in {pygame.K_RIGHT, pygame.K_d, pygame.K_c}:
+            old_pos = (self.state["x"], self.state["y"])
+            dungeona.try_strafe(self.state, 1)
+            moved = old_pos != (self.state["x"], self.state["y"])
+            self.state["message"] = "You sidestep right." if moved else "Blocked on the right."
+            recenter_after_step = moved
             acted = True
         elif key == pygame.K_q:
-            self.state["facing"] = (int(self.state["facing"]) - 1) % 4
+            self.view_angle = self.normalize_angle(self.view_angle - (math.pi / 2.0))
+            self.sync_facing_to_view_angle()
             self.state["message"] = "You turn left."
             acted = True
         elif key == pygame.K_e:
-            self.state["facing"] = (int(self.state["facing"]) + 1) % 4
+            self.view_angle = self.normalize_angle(self.view_angle + (math.pi / 2.0))
+            self.sync_facing_to_view_angle()
             self.state["message"] = "You turn right."
-            acted = True
-        elif key == pygame.K_z:
-            old_pos = (self.state["x"], self.state["y"])
-            dungeona.try_strafe(self.state, -1)
-            self.state["message"] = "You sidestep left." if old_pos != (self.state["x"], self.state["y"]) else "Blocked on the left."
-            acted = True
-        elif key == pygame.K_c:
-            old_pos = (self.state["x"], self.state["y"])
-            dungeona.try_strafe(self.state, 1)
-            self.state["message"] = "You sidestep right." if old_pos != (self.state["x"], self.state["y"]) else "Blocked on the right."
             acted = True
         elif key in {pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER}:
             self.state["message"] = dungeona.use_action(self.state)
@@ -870,6 +977,9 @@ class Dungeona2:
             self.state["show_map"] = not bool(self.state["show_map"])
             self.state["message"] = f"Map {'shown' if self.state['show_map'] else 'hidden'}."
             acted = True
+        elif key == pygame.K_TAB:
+            self.set_mouse_capture(not self.mouse_captured)
+            self.state["message"] = f"Mouse look {'enabled' if self.mouse_captured else 'released'}."
         elif unicode_text == ">":
             self.state["message"] = dungeona.travel_stairs(self.state, 1)
             acted = True
@@ -880,7 +990,33 @@ class Dungeona2:
             return False
 
         self.advance_if_acted(acted)
+        if recenter_after_step:
+            self.view_angle = self.facing_to_angle(int(self.state["facing"]))
+            self.view_pitch = 0.0
+            self.center_mouse()
         return True
+
+    def handle_mousemotion(self, event: "pygame.event.Event") -> None:
+        if not self.mouse_captured:
+            return
+        if self._ignore_mousemotion_events > 0:
+            self._ignore_mousemotion_events -= 1
+            return
+        rel = getattr(event, "rel", (0, 0))
+        if not rel:
+            return
+        delta_x = float(rel[0])
+        delta_y = float(rel[1])
+        if abs(delta_x) >= 0.01:
+            body_angle = self.facing_to_angle(int(self.state["facing"]))
+            candidate_angle = self.normalize_angle(self.view_angle + delta_x * self.mouse_sensitivity)
+            yaw_offset = self.normalize_angle(candidate_angle - body_angle)
+            yaw_offset = max(-self.max_head_yaw, min(self.max_head_yaw, yaw_offset))
+            self.view_angle = self.normalize_angle(body_angle + yaw_offset)
+        if abs(delta_y) >= 0.01:
+            self.view_pitch = max(-self.max_view_pitch, min(self.max_view_pitch, self.view_pitch - delta_y * self.mouse_sensitivity))
+        if abs(delta_x) >= 0.01 or abs(delta_y) >= 0.01:
+            self.center_mouse()
 
     def run(self) -> int:
         running = True
@@ -891,10 +1027,14 @@ class Dungeona2:
                 elif event.type == pygame.VIDEORESIZE:
                     self.screen = pygame.display.set_mode((max(800, event.w), max(600, event.h)), pygame.RESIZABLE)
                     self.resize(event.w, event.h)
+                    if self.mouse_captured:
+                        self.center_mouse()
                 elif event.type == pygame.KEYDOWN:
                     running = self.handle_keydown(event)
                     if not running:
                         break
+                elif event.type == pygame.MOUSEMOTION:
+                    self.handle_mousemotion(event)
 
             self.render()
             self.clock.tick(self.fps)
